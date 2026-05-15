@@ -1,0 +1,557 @@
+"""SQLite database layer for JobHunter."""
+
+import sqlite3
+import json
+from pathlib import Path
+from datetime import datetime, timezone
+from contextlib import contextmanager
+
+DB_PATH = Path("jobhunter.db")
+
+
+@contextmanager
+def get_db():
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def init_db():
+    with get_db() as db:
+        db.executescript("""
+        CREATE TABLE IF NOT EXISTS jobs (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            company TEXT NOT NULL,
+            location TEXT DEFAULT '',
+            apply_link TEXT DEFAULT '',
+            ats TEXT DEFAULT '',
+            score REAL DEFAULT 0.0,
+            match_pct REAL DEFAULT NULL,
+            match_summary TEXT DEFAULT NULL,
+            description TEXT DEFAULT '',
+            posted_at TEXT DEFAULT '',
+            discovered_at TEXT DEFAULT '',
+            source TEXT DEFAULT '',
+            query TEXT DEFAULT '',
+            status TEXT DEFAULT 'pending',
+            acted_at TEXT DEFAULT NULL,
+            team TEXT DEFAULT NULL,
+            project TEXT DEFAULT NULL,
+            recommended_resume TEXT DEFAULT NULL,
+            notes TEXT DEFAULT ''
+        );
+
+        CREATE TABLE IF NOT EXISTS applications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT DEFAULT NULL,
+            title TEXT NOT NULL,
+            company TEXT NOT NULL,
+            location TEXT DEFAULT '',
+            apply_link TEXT DEFAULT '',
+            status TEXT DEFAULT 'applied',
+            applied_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            source TEXT DEFAULT 'jobhunter',
+            salary_min INTEGER DEFAULT NULL,
+            salary_max INTEGER DEFAULT NULL,
+            notes TEXT DEFAULT '',
+            resume_used TEXT DEFAULT '',
+            FOREIGN KEY (job_id) REFERENCES jobs(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS recruiters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            company TEXT DEFAULT '',
+            linkedin_url TEXT DEFAULT '',
+            email TEXT DEFAULT '',
+            application_id INTEGER DEFAULT NULL,
+            notes TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (application_id) REFERENCES applications(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            application_id INTEGER DEFAULT NULL,
+            recruiter_id INTEGER DEFAULT NULL,
+            title TEXT NOT NULL,
+            due_date TEXT NOT NULL,
+            completed INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (application_id) REFERENCES applications(id),
+            FOREIGN KEY (recruiter_id) REFERENCES recruiters(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS blocked_companies (
+            company TEXT PRIMARY KEY,
+            reason TEXT DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_jobs_score ON jobs(score DESC);
+        CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status);
+        CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(due_date);
+        CREATE INDEX IF NOT EXISTS idx_reminders_completed ON reminders(completed);
+        """)
+
+
+def migrate_json_to_db():
+    """One-time migration from queue.json and application_log.json to SQLite."""
+    queue_path = Path("queue.json")
+    log_path = Path("application_log.json")
+
+    with get_db() as db:
+        existing = db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+        if existing > 0:
+            return
+
+        if queue_path.exists():
+            jobs = json.loads(queue_path.read_text())
+            for j in jobs:
+                db.execute("""
+                    INSERT OR IGNORE INTO jobs (id, title, company, location, apply_link, ats, score,
+                        description, posted_at, discovered_at, source, query, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    j.get("id"), j.get("title", ""), j.get("company", ""),
+                    j.get("location", ""), j.get("apply_link", ""), j.get("ats", ""),
+                    j.get("score", 0), j.get("description", "")[:2000],
+                    j.get("posted_at", ""), j.get("discovered_at", ""),
+                    j.get("source", ""), j.get("query", ""), j.get("status", "pending"),
+                ))
+
+        if log_path.exists():
+            logs = json.loads(log_path.read_text())
+            now = datetime.now(timezone.utc).isoformat()
+            for entry in logs:
+                db.execute("""
+                    INSERT INTO applications (job_id, title, company, apply_link, status, applied_at, updated_at, source)
+                    VALUES (?, ?, ?, ?, 'applied', ?, ?, 'jobhunter')
+                """, (
+                    entry.get("id"), entry.get("title", ""), entry.get("company", ""),
+                    entry.get("apply_link", ""), entry.get("opened_at", now), now,
+                ))
+
+
+# --- Job queries ---
+
+def get_jobs(status=None, min_score=None, limit=100, offset=0):
+    clauses, params = [], []
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if min_score is not None:
+        clauses.append("score >= ?")
+        params.append(min_score)
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    params.extend([limit, offset])
+    with get_db() as db:
+        rows = db.execute(f"SELECT * FROM jobs {where} ORDER BY score DESC, discovered_at DESC LIMIT ? OFFSET ?", params).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_job(job_id):
+    with get_db() as db:
+        row = db.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def update_job(job_id, **fields):
+    allowed = {"status", "notes", "match_pct", "match_summary", "team", "project", "recommended_resume"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    updates["acted_at"] = datetime.now(timezone.utc).isoformat()
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    params = list(updates.values()) + [job_id]
+    with get_db() as db:
+        db.execute(f"UPDATE jobs SET {set_clause} WHERE id = ?", params)
+
+
+def upsert_jobs(entries: list):
+    inserted = 0
+    with get_db() as db:
+        for j in entries:
+            cursor = db.execute("""
+                INSERT OR IGNORE INTO jobs (id, title, company, location, apply_link, ats, score,
+                    description, posted_at, discovered_at, source, query, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+            """, (
+                j.get("id"), j.get("title", ""), j.get("company", ""),
+                j.get("location", ""), j.get("apply_link", ""), j.get("ats", ""),
+                j.get("score", 0), j.get("description", "")[:2000],
+                j.get("posted_at", ""), j.get("discovered_at", ""),
+                j.get("source", ""), j.get("query", ""),
+            ))
+            inserted += cursor.rowcount
+    return inserted
+
+
+def count_jobs(status=None, min_score=None):
+    clauses, params = [], []
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if min_score is not None:
+        clauses.append("score >= ?")
+        params.append(min_score)
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    with get_db() as db:
+        row = db.execute(f"SELECT COUNT(*) as count FROM jobs {where}", params).fetchone()
+        return row["count"]
+
+
+def get_job_stats():
+    with get_db() as db:
+        rows = db.execute("SELECT status, COUNT(*) as count FROM jobs GROUP BY status").fetchall()
+        return {r["status"]: r["count"] for r in rows}
+
+
+def get_evaluated_jobs(limit=20):
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT id, title, company, match_pct, match_summary, team, project, recommended_resume, acted_at "
+            "FROM jobs WHERE match_pct IS NOT NULL ORDER BY acted_at DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+# --- Application queries ---
+
+def get_applications(status=None, limit=100, offset=0):
+    clauses, params = [], []
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    params.extend([limit, offset])
+    with get_db() as db:
+        rows = db.execute(f"SELECT * FROM applications {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?", params).fetchall()
+        return [dict(r) for r in rows]
+
+
+def create_application(**fields):
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as db:
+        cursor = db.execute("""
+            INSERT INTO applications (job_id, title, company, location, apply_link, status, applied_at, updated_at, source, salary_min, salary_max, notes, resume_used)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            fields.get("job_id"), fields.get("title", ""), fields.get("company", ""),
+            fields.get("location", ""), fields.get("apply_link", ""),
+            fields.get("status", "applied"), fields.get("applied_at") or now, now,
+            fields.get("source", "manual"), fields.get("salary_min"),
+            fields.get("salary_max"), fields.get("notes", ""), fields.get("resume_used", ""),
+        ))
+        return cursor.lastrowid
+
+
+def update_application(app_id, **fields):
+    allowed = {"status", "notes", "salary_min", "salary_max", "resume_used"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    params = list(updates.values()) + [app_id]
+    with get_db() as db:
+        db.execute(f"UPDATE applications SET {set_clause} WHERE id = ?", params)
+
+
+def get_application_stats():
+    with get_db() as db:
+        rows = db.execute("SELECT status, COUNT(*) as count FROM applications GROUP BY status").fetchall()
+        stats = {r["status"]: r["count"] for r in rows}
+        weekly = db.execute("SELECT COUNT(*) as count FROM applications WHERE applied_at >= date('now', '-7 days')").fetchone()
+        stats["this_week"] = weekly["count"]
+        return stats
+
+
+# --- Recruiter queries ---
+
+def get_recruiters(application_id=None):
+    if application_id:
+        with get_db() as db:
+            rows = db.execute("SELECT * FROM recruiters WHERE application_id = ? ORDER BY created_at DESC", (application_id,)).fetchall()
+            return [dict(r) for r in rows]
+    with get_db() as db:
+        rows = db.execute("SELECT * FROM recruiters ORDER BY created_at DESC").fetchall()
+        return [dict(r) for r in rows]
+
+
+def create_recruiter(**fields):
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as db:
+        cursor = db.execute("""
+            INSERT INTO recruiters (name, company, linkedin_url, email, application_id, notes, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            fields.get("name", ""), fields.get("company", ""),
+            fields.get("linkedin_url", ""), fields.get("email", ""),
+            fields.get("application_id"), fields.get("notes", ""), now,
+        ))
+        return cursor.lastrowid
+
+
+# --- Reminder queries ---
+
+def get_reminders(include_completed=False):
+    clause = "" if include_completed else "WHERE completed = 0"
+    with get_db() as db:
+        rows = db.execute(f"""
+            SELECT r.*, a.title as app_title, a.company as app_company
+            FROM reminders r
+            LEFT JOIN applications a ON r.application_id = a.id
+            {clause}
+            ORDER BY r.due_date ASC
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_due_reminders():
+    with get_db() as db:
+        rows = db.execute("""
+            SELECT r.*, a.title as app_title, a.company as app_company
+            FROM reminders r
+            LEFT JOIN applications a ON r.application_id = a.id
+            WHERE r.completed = 0 AND r.due_date <= datetime('now')
+            ORDER BY r.due_date ASC
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+
+def create_reminder(**fields):
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as db:
+        cursor = db.execute("""
+            INSERT INTO reminders (application_id, recruiter_id, title, due_date, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            fields.get("application_id"), fields.get("recruiter_id"),
+            fields.get("title", ""), fields.get("due_date", ""), now,
+        ))
+        return cursor.lastrowid
+
+
+def complete_reminder(reminder_id):
+    with get_db() as db:
+        db.execute("UPDATE reminders SET completed = 1 WHERE id = ?", (reminder_id,))
+
+
+def _is_us_location(loc: str) -> bool:
+    if not loc or loc.strip() in ("", ","):
+        return True
+    loc_lower = loc.lower().strip()
+    non_us_countries = [
+        "canada", "india", "ireland", "spain", "germany", "uk", "united kingdom",
+        "france", "brazil", "australia", "japan", "singapore", "estonia", "netherlands",
+        "sweden", "poland", "czech", "israel", "korea", "china", "mexico", "colombia",
+        "argentina", "portugal", "italy", "belgium", "switzerland", "austria", "denmark",
+        "norway", "finland", "romania", "hungary", "bulgaria", "croatia", "serbia",
+        "philippines", "vietnam", "thailand", "indonesia", "malaysia", "taiwan",
+        "hong kong", "new zealand",
+    ]
+    non_us_markers = [
+        "toronto", "vancouver", "montreal", "london", "dublin", "berlin", "munich",
+        "paris", "amsterdam", "stockholm", "warsaw", "prague", "tel aviv", "bangalore",
+        "hyderabad", "mumbai", "delhi", "chennai", "pune", "kolkata", "sydney",
+        "melbourne", "tokyo", "singapore", "seoul", "beijing", "shanghai", "sao paulo",
+        "mexico city", "bogota", "buenos aires", ", on,", "ontario",
+    ]
+    for country in non_us_countries:
+        if country in loc_lower:
+            return False
+    for marker in non_us_markers:
+        if marker in loc_lower:
+            return False
+    if loc_lower.startswith("remote") and "us" not in loc_lower and "united states" not in loc_lower:
+        parts = [p.strip() for p in loc_lower.replace("-", ",").split(",") if p.strip()]
+        if len(parts) > 1 and parts[-1] not in ("us", "usa", "united states"):
+            return False
+    return True
+
+
+def delete_non_us_jobs():
+    with get_db() as conn:
+        rows = conn.execute("SELECT id, location FROM jobs").fetchall()
+        to_delete = []
+        for r in rows:
+            if not _is_us_location(r["location"]):
+                to_delete.append(r["id"])
+        if to_delete:
+            conn.execute(f"UPDATE applications SET job_id = NULL WHERE job_id IN ({','.join('?' * len(to_delete))})", to_delete)
+            conn.execute(f"DELETE FROM jobs WHERE id IN ({','.join('?' * len(to_delete))})", to_delete)
+        return len(to_delete)
+
+
+def get_analytics():
+    with get_db() as db:
+        apps_by_company = db.execute(
+            "SELECT company, COUNT(*) as count FROM applications GROUP BY company ORDER BY count DESC"
+        ).fetchall()
+
+        apps_by_day = db.execute(
+            "SELECT DATE(applied_at) as day, COUNT(*) as count FROM applications GROUP BY DATE(applied_at) ORDER BY day"
+        ).fetchall()
+
+        apps_by_status = db.execute(
+            "SELECT status, COUNT(*) as count FROM applications GROUP BY status ORDER BY count DESC"
+        ).fetchall()
+
+        apps_by_source = db.execute(
+            "SELECT source, COUNT(*) as count FROM applications GROUP BY source ORDER BY count DESC"
+        ).fetchall()
+
+        apps_by_resume = db.execute(
+            "SELECT COALESCE(NULLIF(resume_used, ''), 'none') as resume, COUNT(*) as count FROM applications GROUP BY resume ORDER BY count DESC"
+        ).fetchall()
+
+        jobs_by_ats = db.execute(
+            "SELECT ats, COUNT(*) as count FROM jobs GROUP BY ats ORDER BY count DESC"
+        ).fetchall()
+
+        jobs_by_company = db.execute(
+            "SELECT company, COUNT(*) as count FROM jobs GROUP BY company ORDER BY count DESC LIMIT 20"
+        ).fetchall()
+
+        match_pct_dist = db.execute(
+            "SELECT CASE "
+            "WHEN match_pct >= 80 THEN '80-100' "
+            "WHEN match_pct >= 60 THEN '60-79' "
+            "WHEN match_pct >= 40 THEN '40-59' "
+            "WHEN match_pct >= 20 THEN '20-39' "
+            "ELSE '0-19' END as bracket, COUNT(*) as count "
+            "FROM jobs WHERE match_pct IS NOT NULL GROUP BY bracket ORDER BY bracket"
+        ).fetchall()
+
+        total_apps = db.execute("SELECT COUNT(*) as count FROM applications").fetchone()["count"]
+        total_jobs = db.execute("SELECT COUNT(*) as count FROM jobs").fetchone()["count"]
+        total_recruiters = db.execute("SELECT COUNT(*) as count FROM recruiters").fetchone()["count"]
+        total_evals = db.execute("SELECT COUNT(*) as count FROM jobs WHERE match_pct IS NOT NULL").fetchone()["count"]
+        avg_match = db.execute("SELECT AVG(match_pct) as avg FROM jobs WHERE match_pct IS NOT NULL").fetchone()["avg"]
+        blocked = db.execute("SELECT COUNT(*) as count FROM blocked_companies").fetchone()["count"]
+
+        apps_this_week = db.execute(
+            "SELECT COUNT(*) as count FROM applications WHERE applied_at >= date('now', '-7 days')"
+        ).fetchone()["count"]
+        apps_this_month = db.execute(
+            "SELECT COUNT(*) as count FROM applications WHERE applied_at >= date('now', '-30 days')"
+        ).fetchone()["count"]
+
+        recruiters_by_company = db.execute(
+            "SELECT company, COUNT(*) as count FROM recruiters WHERE company != '' GROUP BY company ORDER BY count DESC LIMIT 15"
+        ).fetchall()
+
+    return {
+        "totals": {
+            "applications": total_apps,
+            "jobs_discovered": total_jobs,
+            "recruiters_contacted": total_recruiters,
+            "evaluations": total_evals,
+            "avg_match_pct": round(avg_match, 1) if avg_match else 0,
+            "blocked_companies": blocked,
+            "apps_this_week": apps_this_week,
+            "apps_this_month": apps_this_month,
+        },
+        "apps_by_company": [dict(r) for r in apps_by_company],
+        "apps_by_day": [dict(r) for r in apps_by_day],
+        "apps_by_status": [dict(r) for r in apps_by_status],
+        "apps_by_source": [dict(r) for r in apps_by_source],
+        "apps_by_resume": [dict(r) for r in apps_by_resume],
+        "jobs_by_ats": [dict(r) for r in jobs_by_ats],
+        "jobs_by_company": [dict(r) for r in jobs_by_company],
+        "match_pct_distribution": [dict(r) for r in match_pct_dist],
+        "recruiters_by_company": [dict(r) for r in recruiters_by_company],
+    }
+
+
+def clear_pending_jobs():
+    with get_db() as db:
+        cursor = db.execute("UPDATE jobs SET status = 'skipped' WHERE status = 'pending'")
+        return cursor.rowcount
+
+
+# --- Blocked companies ---
+
+def block_company(company: str, reason: str = "no sponsorship"):
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as db:
+        db.execute(
+            "INSERT OR REPLACE INTO blocked_companies (company, reason, created_at) VALUES (?, ?, ?)",
+            (company, reason, now),
+        )
+        db.execute(
+            "UPDATE jobs SET status = 'skipped', notes = ? WHERE LOWER(company) = LOWER(?) AND status = 'pending'",
+            (f"Blocked: {reason}", company),
+        )
+
+
+def unblock_company(company: str):
+    with get_db() as db:
+        db.execute("DELETE FROM blocked_companies WHERE LOWER(company) = LOWER(?)", (company,))
+
+
+def get_blocked_companies():
+    with get_db() as db:
+        rows = db.execute("SELECT * FROM blocked_companies ORDER BY created_at DESC").fetchall()
+        return [dict(r) for r in rows]
+
+
+def is_company_blocked(company: str) -> bool:
+    with get_db() as db:
+        row = db.execute(
+            "SELECT 1 FROM blocked_companies WHERE LOWER(company) = LOWER(?)", (company,)
+        ).fetchone()
+        return row is not None
+
+
+# --- Fix Workday URLs ---
+
+def fix_workday_urls(companies: list):
+    slug_to_info = {}
+    for c in companies:
+        if c.get("ats") == "workday":
+            slug_to_info[c["name"].lower()] = {
+                "slug": c["slug"],
+                "wd_num": c.get("wd_num", 5),
+                "site": c.get("site", ""),
+            }
+
+    with get_db() as db:
+        rows = db.execute("SELECT id, company, apply_link FROM jobs WHERE ats = 'workday'").fetchall()
+        fixed = 0
+        for r in rows:
+            link = r["apply_link"] or ""
+            company_lower = (r["company"] or "").lower()
+            info = slug_to_info.get(company_lower)
+            if not info:
+                continue
+            base = f"https://{info['slug']}.wd{info['wd_num']}.myworkdayjobs.com"
+            expected_prefix = f"{base}/en-US/{info['site']}"
+            if link.startswith(expected_prefix):
+                continue
+            if link.startswith(base):
+                path = link[len(base):]
+                new_url = f"{expected_prefix}{path}"
+                db.execute("UPDATE jobs SET apply_link = ? WHERE id = ?", (new_url, r["id"]))
+                fixed += 1
+        return fixed
+
+
+if __name__ == "__main__":
+    init_db()
+    migrate_json_to_db()
+    print("DB initialized and migrated.")
