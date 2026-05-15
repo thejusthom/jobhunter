@@ -14,7 +14,7 @@ from pathlib import Path
 JSEARCH_URL = "https://jsearch.p.rapidapi.com/search-v2"
 JSEARCH_KEY = os.environ.get("JSEARCH_API_KEY", "")
 
-SCORE_THRESHOLD = 0.70
+SCORE_THRESHOLD = 70
 QUEUE_PATH = Path("queue.json")
 LOG_PATH = Path("applied_log.json")
 BLACKLIST_PATH = Path("blacklist.json")
@@ -142,7 +142,7 @@ def score_job(job: dict) -> float:
     """
     Resume-aware scorer for Thejus Thomson.
     Tiered: primary stack (0–0.65) + secondary (0–0.20) + title match (0.10) + easy-apply (0.05).
-    Returns 0.0 to 1.0.
+    Returns 0 to 100.
     """
     title = job.get("job_title", "").lower()
     description = job.get("job_description", "").lower()
@@ -199,7 +199,7 @@ def score_job(job: dict) -> float:
     if job.get("job_apply_is_direct"):
         score += 0.05
 
-    return round(min(score, 1.0), 2)
+    return round(min(score, 1.0) * 100)
 
 
 def already_applied(jid: str, log: list) -> bool:

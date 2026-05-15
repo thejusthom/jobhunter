@@ -308,7 +308,7 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
                     if is_blacklisted(job, blacklist):
                         continue
                     sc = score_job(job)
-                    threshold = 0.25 if ats == "workday" else SCORE_THRESHOLD
+                    threshold = 25 if ats == "workday" else SCORE_THRESHOLD
                     if sc < threshold:
                         continue
                     skip, _ = llm.hard_skip_check(

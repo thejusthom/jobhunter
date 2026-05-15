@@ -213,7 +213,7 @@ export default function JobQueue() {
                           {job.match_pct}%
                         </span>
                       )}
-                      <span className="text-xs text-text-muted font-mono tabular-nums">{(job.score || 0).toFixed(2)}</span>
+                      <span className="text-xs text-text-muted font-mono tabular-nums">{job.score || 0}</span>
                       <span className={`text-xs px-2 py-0.5 rounded-md capitalize ${STATUS_COLORS[job.status] || 'bg-surface-overlay text-text-muted'}`}>
                         {job.status}
                       </span>
@@ -392,7 +392,7 @@ export default function JobQueue() {
           )}
 
           <div className="text-sm text-text-tertiary space-y-1.5 mb-4">
-            <div>Score: <span className="text-text-primary font-medium">{(selected.score || 0).toFixed(2)}</span></div>
+            <div>Score: <span className="text-text-primary font-medium">{selected.score || 0}</span></div>
             <div>ATS: <span className="text-text-secondary">{selected.ats}</span></div>
             <div>Source: <span className="text-text-secondary">{selected.source}</span></div>
             {selected.posted_at && <div>Posted: <span className="text-text-secondary">{new Date(selected.posted_at).toLocaleDateString()}</span></div>}

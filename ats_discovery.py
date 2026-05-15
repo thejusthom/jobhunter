@@ -560,7 +560,7 @@ def discover_from_ats(companies_path: str = None) -> list:
                 continue
 
             score = score_job(job)
-            threshold = 0.25 if ats == "workday" else SCORE_THRESHOLD
+            threshold = 25 if ats == "workday" else SCORE_THRESHOLD
             if score < threshold:
                 continue
 
