@@ -31,20 +31,25 @@ SKIP_TITLE_KEYWORDS = [
     "hr ", "people partner", "program manager",
 ]
 
-US_LOCATION_KEYWORDS = [
-    "united states", "usa", "us", "remote",
-    "new york", "san francisco", "seattle", "austin", "boston",
-    "chicago", "los angeles", "denver", "atlanta", "dallas",
-    "houston", "portland", "phoenix", "miami", "philadelphia",
-    "washington", "dc", "california", "texas", "virginia",
-    "massachusetts", "colorado", "georgia", "illinois", "oregon",
-    "pennsylvania", "florida", "north carolina", "minnesota",
-    "utah", "arizona", "maryland", "ohio", "michigan", "indiana",
-    "mountain view", "palo alto", "sunnyvale", "cupertino",
-    "san jose", "redmond", "brooklyn", "manhattan",
-    ", ca", ", ny", ", wa", ", tx", ", ma", ", co", ", ga",
-    ", il", ", or", ", pa", ", fl", ", nc", ", mn", ", ut",
-    ", az", ", md", ", oh", ", mi", ", in", ", va",
+NON_US_COUNTRIES = [
+    "canada", "india", "ireland", "spain", "germany", "uk", "united kingdom",
+    "france", "brazil", "australia", "japan", "singapore", "estonia", "netherlands",
+    "sweden", "poland", "czech", "israel", "korea", "china", "mexico", "colombia",
+    "argentina", "portugal", "italy", "belgium", "switzerland", "austria", "denmark",
+    "norway", "finland", "romania", "hungary", "bulgaria", "croatia", "serbia",
+    "philippines", "vietnam", "thailand", "indonesia", "malaysia", "taiwan",
+    "hong kong", "new zealand",
+]
+
+NON_US_CITIES = [
+    "toronto", "vancouver", "montreal", "ottawa", "calgary", "edmonton", "winnipeg",
+    "london", "dublin", "berlin", "munich", "paris", "amsterdam", "stockholm",
+    "warsaw", "prague", "tel aviv", "bangalore", "bengaluru", "hyderabad", "mumbai",
+    "delhi", "chennai", "pune", "kolkata", "noida", "gurgaon", "sydney", "melbourne",
+    "tokyo", "singapore", "seoul", "beijing", "shanghai", "sao paulo", "mexico city",
+    "bogota", "buenos aires", "lisbon", "barcelona", "madrid", "rome", "milan",
+    "zurich", "geneva", "vienna", "copenhagen", "oslo", "helsinki", "bucharest",
+    "brisbane", "auckland", "wellington",
 ]
 
 
@@ -86,10 +91,57 @@ def _job_id(company: str, title: str, url: str) -> str:
 
 
 def _is_us_location(location: str) -> bool:
-    if not location:
+    if not location or location.strip() in ("", ","):
         return True
-    loc_lower = location.lower()
-    return any(kw in loc_lower for kw in US_LOCATION_KEYWORDS)
+    loc_lower = location.lower().strip()
+
+    # Check for known non-US countries
+    for country in NON_US_COUNTRIES:
+        if country in loc_lower:
+            # "CA" appears in California locations — only block standalone "canada"
+            return False
+
+    # Check for known non-US cities
+    for city in NON_US_CITIES:
+        if city in loc_lower:
+            return False
+
+    # Canadian provinces that look like US abbreviations
+    if "british columbia" in loc_lower or "can-remote" in loc_lower or "can - remote" in loc_lower:
+        return False
+
+    # "Remote - <country>" pattern: block unless it mentions US
+    if "remote" in loc_lower:
+        # Split on common separators
+        parts = [p.strip() for p in re.split(r'[-,;|]', loc_lower) if p.strip()]
+        # If there's a qualifier after "remote" and it's not US-related, reject
+        for part in parts:
+            if part in ("remote",):
+                continue
+            if part in ("us", "usa", "united states"):
+                return True
+            # Check if this part is a US state abbreviation or city — allow it
+            us_markers = [
+                "ny", "ca", "wa", "tx", "ma", "co", "ga", "il", "or", "pa",
+                "fl", "nc", "mn", "ut", "az", "md", "oh", "mi", "in", "va",
+                "new york", "san francisco", "seattle", "austin", "boston",
+                "chicago", "los angeles", "denver", "atlanta", "dallas",
+                "houston", "portland", "phoenix", "miami", "philadelphia",
+                "washington", "dc", "california", "texas", "virginia",
+                "massachusetts", "colorado", "georgia", "illinois", "oregon",
+            ]
+            if any(m in part for m in us_markers):
+                return True
+        # "Remote" alone with no US qualifier after checking all parts
+        if len(parts) > 1:
+            return False
+
+    # "ON, CA" is Ontario, Canada — not California
+    if ", on," in loc_lower or loc_lower.endswith(", on") or "ontario" in loc_lower:
+        if "toronto" in loc_lower or "canada" in loc_lower or "on, ca" in loc_lower:
+            return False
+
+    return True
 
 
 # ---------------------------------------------------------------------------

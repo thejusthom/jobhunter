@@ -351,40 +351,8 @@ def complete_reminder(reminder_id):
         db.execute("UPDATE reminders SET completed = 1 WHERE id = ?", (reminder_id,))
 
 
-def _is_us_location(loc: str) -> bool:
-    if not loc or loc.strip() in ("", ","):
-        return True
-    loc_lower = loc.lower().strip()
-    non_us_countries = [
-        "canada", "india", "ireland", "spain", "germany", "uk", "united kingdom",
-        "france", "brazil", "australia", "japan", "singapore", "estonia", "netherlands",
-        "sweden", "poland", "czech", "israel", "korea", "china", "mexico", "colombia",
-        "argentina", "portugal", "italy", "belgium", "switzerland", "austria", "denmark",
-        "norway", "finland", "romania", "hungary", "bulgaria", "croatia", "serbia",
-        "philippines", "vietnam", "thailand", "indonesia", "malaysia", "taiwan",
-        "hong kong", "new zealand",
-    ]
-    non_us_markers = [
-        "toronto", "vancouver", "montreal", "london", "dublin", "berlin", "munich",
-        "paris", "amsterdam", "stockholm", "warsaw", "prague", "tel aviv", "bangalore",
-        "hyderabad", "mumbai", "delhi", "chennai", "pune", "kolkata", "sydney",
-        "melbourne", "tokyo", "singapore", "seoul", "beijing", "shanghai", "sao paulo",
-        "mexico city", "bogota", "buenos aires", ", on,", "ontario",
-    ]
-    for country in non_us_countries:
-        if country in loc_lower:
-            return False
-    for marker in non_us_markers:
-        if marker in loc_lower:
-            return False
-    if loc_lower.startswith("remote") and "us" not in loc_lower and "united states" not in loc_lower:
-        parts = [p.strip() for p in loc_lower.replace("-", ",").split(",") if p.strip()]
-        if len(parts) > 1 and parts[-1] not in ("us", "usa", "united states"):
-            return False
-    return True
-
-
 def delete_non_us_jobs():
+    from ats_discovery import _is_us_location
     with get_db() as conn:
         rows = conn.execute("SELECT id, location FROM jobs").fetchall()
         to_delete = []
