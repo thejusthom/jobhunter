@@ -1,0 +1,40 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Backend",
+      "type": "process",
+      "command": "${workspaceFolder}/venv/Scripts/python.exe",
+      "args": ["server.py"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "group": "jobhunter",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Frontend",
+      "type": "shell",
+      "command": "npx vite --port 5174",
+      "options": {
+        "cwd": "${workspaceFolder}/frontend"
+      },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "group": "jobhunter",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Start JobHunter",
+      "dependsOn": ["Backend", "Frontend"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    }
+  ]
+}

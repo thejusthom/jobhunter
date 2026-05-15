@@ -1,0 +1,13 @@
+.env
+venv/
+__pycache__/
+*.pyc
+*.db
+*.db-wal
+*.db-shm
+queue.json
+application_log.json
+resumes/
+.claude/
+server.log
+*.log
