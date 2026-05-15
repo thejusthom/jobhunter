@@ -179,10 +179,21 @@ CITIZENSHIP_PATTERNS = [
     r"no (visa )?sponsorship",
     r"cannot sponsor",
     r"will not (be )?sponsor",
+    r"(does|do) not (offer|provide) (visa )?sponsor",
+    r"unable to (offer|provide) (visa )?sponsor",
+    r"not (able|willing) to sponsor",
     r"without (the )?need for .* sponsorship",
+    r"(not |un)able to sponsor",
+    r"sponsorship is not available",
+    r"sponsorship not available",
+    r"(this|the) position (does not|will not|cannot) (offer |provide )?sponsor",
+    r"must be (legally )?authorized to work",
+    r"authorized to work in the (us|u\.s\.?|united states)",
+    r"work authorization.*(required|must|necessary)",
     r"permanent resident(s)? (only|required)",
     r"(us|u\.s\.?) persons? only",
     r"itar .* (us|u\.s\.?) person",
+    r"(eeo|equal opportunity).*(authorized|eligible) to work",
 ]
 
 SCAM_PATTERNS = [

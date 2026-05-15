@@ -122,6 +122,8 @@ export default function JobQueue() {
         match_summary: result.summary,
         team: result.team,
         project: result.project,
+        min_years_required: result.min_years_required,
+        sponsorship_available: result.sponsorship_available,
       })
       load()
     } catch (e) {
@@ -367,6 +369,22 @@ export default function JobQueue() {
                   selected.match_pct >= 40 ? 'text-warning' : 'text-danger'
                 }`}>{selected.match_pct}%</span>
               </div>
+
+              {(selected.sponsorship_available === false || (matchResult?.sponsorship_available === false)) && (
+                <div className="bg-red-900/20 text-red-400 text-xs px-3 py-1.5 rounded-md mb-2 font-medium">
+                  No Visa Sponsorship
+                </div>
+              )}
+              {(selected.min_years_required || matchResult?.min_years_required) && (
+                <div className={`text-xs px-3 py-1.5 rounded-md mb-2 font-medium ${
+                  (selected.min_years_required || matchResult?.min_years_required) >= 5
+                    ? 'bg-red-900/20 text-red-400'
+                    : 'bg-amber-900/20 text-amber-400'
+                }`}>
+                  Requires {selected.min_years_required || matchResult?.min_years_required}+ years experience
+                </div>
+              )}
+
               {selected.match_summary && <p className="text-sm text-text-secondary leading-relaxed">{selected.match_summary}</p>}
               {selected.team && <p className="text-xs text-text-muted mt-2">Team: {selected.team}</p>}
               {selected.project && <p className="text-xs text-text-muted">Project: {selected.project}</p>}

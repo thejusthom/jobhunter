@@ -401,9 +401,8 @@ def match_job(job_id: str):
                 "team": None, "project": None}
 
     system_prompt = (
-        "You are a senior technical recruiter evaluating candidate-job fit.\n\n"
-        "Analyze the resume against the job description. Be thorough but generous — "
-        "the candidate is actively job searching and transferable skills matter.\n\n"
+        "You are a strict technical recruiter evaluating candidate-job fit.\n\n"
+        "Analyze the resume against the job description REALISTICALLY. Do not inflate scores.\n\n"
         "Respond with ONLY a valid JSON object (no markdown fences):\n"
         "{\n"
         '  "match_pct": <integer 0-100>,\n'
@@ -412,20 +411,28 @@ def match_job(job_id: str):
         '  "project": "<project/product name from JD, or null if not mentioned>",\n'
         '  "key_strengths": ["<strength1>", "<strength2>", "<strength3>"],\n'
         '  "gaps": ["<gap1>", "<gap2>"],\n'
+        '  "min_years_required": <minimum years of experience required by JD, or null if not specified>,\n'
+        '  "sponsorship_available": <true if JD says they sponsor visas, false if they say they do NOT sponsor, null if not mentioned>,\n'
         '  "scam_flag": <true if this looks like a fake/scam posting, else false>\n'
         "}\n\n"
-        "SCORING GUIDE:\n"
-        "- 80-100: Strong match — most required skills present, relevant experience\n"
-        "- 60-79: Good match — solid overlap, some gaps but transferable skills cover them\n"
-        "- 40-59: Partial match — meaningful gaps but candidate could grow into the role\n"
-        "- 20-39: Weak match — significant skill/experience mismatch\n"
-        "- 0-19: No match or scam posting\n\n"
-        "RULES:\n"
-        "- Do NOT penalize for 'preferred' or 'nice-to-have' qualifications\n"
-        "- Do NOT penalize for location — candidate will relocate anywhere in US\n"
-        "- Value transferable skills (e.g., Java experience transfers to Kotlin)\n"
-        "- Entry-level/new-grad roles should score higher for recent grads\n"
-        "- Flag scam_flag=true if JD is generic, company seems fake, or posting harvests data"
+        "SCORING GUIDE (be strict, do NOT default to 70-75):\n"
+        "- 85-100: Near-perfect match — meets all required skills AND experience level\n"
+        "- 70-84: Strong match — meets most required skills, experience level is close\n"
+        "- 50-69: Decent match — has relevant skills but notable gaps in experience or stack\n"
+        "- 30-49: Weak match — some transferable skills but missing key requirements\n"
+        "- 10-29: Poor match — significant skill AND experience mismatch\n"
+        "- 0-9: No match, scam, or deal-breaker (no sponsorship, clearance required)\n\n"
+        "CRITICAL RULES:\n"
+        "- EXPERIENCE: If JD requires X+ years and candidate has significantly less, "
+        "this is a MAJOR penalty. 5+ years required with <2 years experience = score under 40.\n"
+        "- SPONSORSHIP: If JD explicitly says 'no visa sponsorship', 'will not sponsor', "
+        "'must be authorized to work', score 0-10 and mention it prominently in summary.\n"
+        "- SENIORITY: Senior/Staff/Lead roles requiring 5+ years should score LOW for new grads.\n"
+        "- REQUIRED vs PREFERRED: Only penalize for REQUIRED qualifications, not preferred/nice-to-have.\n"
+        "- LOCATION: Do NOT penalize for location — candidate will relocate anywhere in US.\n"
+        "- TRANSFERABLE SKILLS: Give modest credit (not full credit) for related skills.\n"
+        "- DO NOT cluster scores around 70-75. Use the full 0-100 range based on actual fit.\n"
+        "- Flag scam_flag=true if JD is generic, company seems fake, or posting harvests data."
     )
 
     user_prompt = (
@@ -447,6 +454,17 @@ def match_job(job_id: str):
     if result.get("scam_flag"):
         result["match_pct"] = 0
         result["summary"] = f"[SCAM FLAG] {result.get('summary', 'Suspicious posting')}"
+
+    if result.get("sponsorship_available") is False:
+        result["match_pct"] = min(result.get("match_pct", 0), 5)
+        result["summary"] = f"[NO SPONSORSHIP] {result.get('summary', 'Does not sponsor visas')}"
+
+    # Prepend experience warning to summary if relevant
+    min_years = result.get("min_years_required")
+    if min_years and min_years >= 5:
+        summary = result.get("summary", "")
+        if "experience" not in summary.lower() and "years" not in summary.lower():
+            result["summary"] = f"[Requires {min_years}+ years exp] {summary}"
 
     db.update_job(
         job_id,
