@@ -28,6 +28,7 @@ export default function JobQueue() {
   const [matchResult, setMatchResult] = useState(null)
   const [loading, setLoading] = useState(true)
   const [followUp, setFollowUp] = useState(null)
+  const [linkedinPrompt, setLinkedinPrompt] = useState(null) // { company, currentId, verified }
 
   const load = useCallback(() => {
     setLoading(true)
@@ -47,11 +48,6 @@ export default function JobQueue() {
   }
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
-
-  const handleApplyClick = (job) => {
-    window.open(job.apply_link, '_blank')
-    setFollowUp(job)
-  }
 
   const handleFollowUpConfirm = async (applied, contactedRecruiter, job = null) => {
     const target = job || followUp
@@ -137,8 +133,46 @@ export default function JobQueue() {
     try {
       const result = await api.linkedinSearch(job.id)
       window.open(result.url, '_blank')
+      // If the ID isn't verified, prompt the user to confirm/update it
+      if (!result.verified) {
+        setLinkedinPrompt({ company: result.company, currentId: result.linkedin_id || '', verified: false })
+      }
     } catch (e) {
       alert(e.message)
+    }
+  }
+
+  const handleSaveLinkedInId = async (company, newId) => {
+    try {
+      await api.updateLinkedInId(company, newId)
+      setLinkedinPrompt(null)
+    } catch (e) {
+      alert(e.message)
+    }
+  }
+
+  const handleLinkedInLeaders = async (job, role = 'hiring') => {
+    try {
+      const result = await api.linkedinLeaders(job.id, role)
+      window.open(result.url, '_blank')
+    } catch (e) {
+      alert(e.message)
+    }
+  }
+
+  const [emailResults, setEmailResults] = useState(null)
+  const [emailLoading, setEmailLoading] = useState(false)
+
+  const handleFindEmails = async (job) => {
+    setEmailLoading(true)
+    setEmailResults(null)
+    try {
+      const result = await api.findEmails(job.id)
+      setEmailResults(result)
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setEmailLoading(false)
     }
   }
 
@@ -259,12 +293,6 @@ export default function JobQueue() {
           <p className="text-text-tertiary text-sm mt-1 mb-4">{selected.company} · {selected.location}</p>
 
           <div className="flex gap-2 mb-3 flex-wrap">
-            <button
-              onClick={() => handleApplyClick(selected)}
-              className="bg-accent hover:bg-accent-hover text-white font-medium text-sm px-4 py-2 rounded-lg transition-all duration-150"
-            >
-              Apply
-            </button>
             {selected.match_pct == null && (
               <button
                 onClick={() => handleMatch(selected)}
@@ -280,6 +308,25 @@ export default function JobQueue() {
             >
               Find Recruiters
             </button>
+            <button
+              onClick={() => handleLinkedInLeaders(selected, 'hiring')}
+              className="bg-surface-overlay hover:bg-border text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
+            >
+              Hiring Manager
+            </button>
+            <button
+              onClick={() => handleLinkedInLeaders(selected, 'team')}
+              className="bg-surface-overlay hover:bg-border text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
+            >
+              Team Referral
+            </button>
+            <button
+              onClick={() => handleFindEmails(selected)}
+              disabled={emailLoading}
+              className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
+            >
+              {emailLoading ? 'Finding...' : 'Find Emails'}
+            </button>
             {selected.apply_link && (
               <a
                 href={selected.apply_link}
@@ -291,6 +338,36 @@ export default function JobQueue() {
               </a>
             )}
           </div>
+
+          {linkedinPrompt && linkedinPrompt.company === selected.company && (
+            <div className="bg-surface border border-accent/20 rounded-lg p-3 mb-3">
+              <p className="text-xs text-text-tertiary mb-2">
+                Wrong recruiter results? Paste the correct LinkedIn company ID from the URL
+                <span className="text-text-muted block mt-0.5">
+                  (currentCompany=%5B"<span className="text-accent">ID_HERE</span>"%5D)
+                </span>
+              </p>
+              <form onSubmit={(e) => {
+                e.preventDefault()
+                const id = e.target.elements.lid.value.trim()
+                if (id) handleSaveLinkedInId(linkedinPrompt.company, id)
+              }} className="flex gap-2">
+                <input
+                  name="lid"
+                  type="text"
+                  defaultValue={linkedinPrompt.currentId}
+                  placeholder="e.g. 74126343"
+                  className="flex-1 text-xs bg-surface-overlay border border-border rounded-md px-2.5 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50"
+                />
+                <button type="submit" className="text-xs px-3 py-1.5 bg-accent hover:bg-accent-hover text-white rounded-md transition-all">
+                  Save
+                </button>
+                <button type="button" onClick={() => setLinkedinPrompt(null)} className="text-xs px-2 py-1.5 text-text-muted hover:text-text-tertiary">
+                  ✕
+                </button>
+              </form>
+            </div>
+          )}
 
           <div className="flex flex-wrap gap-1.5 mb-5">
             <button
@@ -322,6 +399,24 @@ export default function JobQueue() {
               className="text-xs px-3 py-1.5 rounded-md text-danger/60 hover:text-danger bg-red-900/10 hover:bg-red-900/20 transition-all duration-150"
             >
               No Sponsorship
+            </button>
+            <button
+              onClick={() => handleSkipJob('Expired / closed', selected)}
+              className="text-xs px-3 py-1.5 rounded-md text-amber-500/60 hover:text-amber-400 bg-amber-900/10 hover:bg-amber-900/20 transition-all duration-150"
+            >
+              Expired
+            </button>
+            <button
+              onClick={() => handleSkipJob('Bad / incorrect link', selected)}
+              className="text-xs px-3 py-1.5 rounded-md text-amber-500/60 hover:text-amber-400 bg-amber-900/10 hover:bg-amber-900/20 transition-all duration-150"
+            >
+              Bad Link
+            </button>
+            <button
+              onClick={() => handleSkipJob('Not US location', selected)}
+              className="text-xs px-3 py-1.5 rounded-md text-amber-500/60 hover:text-amber-400 bg-amber-900/10 hover:bg-amber-900/20 transition-all duration-150"
+            >
+              Not US
             </button>
             <button
               onClick={() => handleBlockCompany('no sponsorship', selected)}
@@ -397,6 +492,40 @@ export default function JobQueue() {
             <div>Source: <span className="text-text-secondary">{selected.source}</span></div>
             {selected.posted_at && <div>Posted: <span className="text-text-secondary">{new Date(selected.posted_at).toLocaleDateString()}</span></div>}
           </div>
+
+          {emailResults && emailResults.company === selected.company && (
+            <div className="bg-surface border border-border rounded-lg p-4 mb-4">
+              <div className="flex justify-between items-center mb-2">
+                <h3 className="text-sm font-medium text-text-secondary">Emails — {emailResults.company}</h3>
+                <button onClick={() => setEmailResults(null)} className="text-text-muted hover:text-text-tertiary text-xs">✕</button>
+              </div>
+              {emailResults.domain && (
+                <p className="text-xs text-text-muted mb-1">Domain: <span className="text-text-secondary">{emailResults.domain}</span></p>
+              )}
+              {emailResults.pattern && (
+                <p className="text-xs text-text-muted mb-2">Pattern: <span className="text-accent">{emailResults.pattern}</span> (e.g. {emailResults.pattern.replace('{first}', 'jane').replace('{last}', 'doe').replace('{f}', 'j').replace('{l}', 'd')}@{emailResults.domain})</p>
+              )}
+              {emailResults.people.length > 0 ? (
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {emailResults.people.map((p, i) => (
+                    <div key={i} className="text-xs border-t border-border/50 pt-1.5">
+                      <div className="flex justify-between">
+                        <span className="text-text-primary font-medium">{p.first_name} {p.last_name}</span>
+                        <span className="text-text-muted">{p.confidence}%</span>
+                      </div>
+                      {p.position && <div className="text-text-tertiary">{p.position}</div>}
+                      <div className="flex gap-2 mt-0.5">
+                        <a href={`mailto:${p.email}`} className="text-accent hover:underline">{p.email}</a>
+                        {p.linkedin && <a href={p.linkedin} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">LinkedIn</a>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-text-muted">No engineering emails found. Try the email pattern above with a name from LinkedIn.</p>
+              )}
+            </div>
+          )}
 
           {selected.description && (
             <div className="border-t border-border pt-4">

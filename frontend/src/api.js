@@ -22,6 +22,9 @@ export const api = {
   getJobStats: () => request('/jobs/stats'),
   matchJob: (id) => request(`/jobs/${id}/match`, { method: 'POST' }),
   linkedinSearch: (id) => request(`/jobs/${id}/linkedin-search`),
+  linkedinLeaders: (id, role = 'hiring') => request(`/jobs/${id}/linkedin-leaders?role=${role}`),
+  findEmails: (id) => request(`/jobs/${id}/find-emails`),
+  updateLinkedInId: (company, linkedin_id) => request('/linkedin-id', { method: 'PATCH', body: JSON.stringify({ company, linkedin_id }) }),
 
   getApplications: (params = {}) => {
     const q = new URLSearchParams(params).toString();

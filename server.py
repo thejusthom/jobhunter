@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import requests as http_requests
 import database as db
 import llm
 from discovery import (
@@ -95,6 +96,7 @@ class DiscoverRequest(BaseModel):
     location: str = "United States"
     skip_jsearch: bool = False
     skip_ats: bool = False
+    skip_adzuna: bool = False
     freshness_hours: int = 24
 
 
@@ -202,7 +204,51 @@ def complete_reminder(reminder_id: int):
 
 discovery_status = {"running": False, "last_run": None, "new_jobs": 0}
 
-def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_ats: bool, freshness_hours: int = 24):
+ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID", "")
+ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY", "")
+
+
+def _fetch_adzuna(query: str, location: str = "us", pages: int = 3, max_days_old: int = 3) -> list:
+    """Fetch jobs from Adzuna API. Free tier: 250 req/day."""
+    if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
+        print("[adzuna] No API keys configured, skipping")
+        return []
+
+    jobs = []
+    for page in range(1, pages + 1):
+        try:
+            resp = http_requests.get(
+                f"https://api.adzuna.com/v1/api/jobs/{location}/search/{page}",
+                params={
+                    "app_id": ADZUNA_APP_ID,
+                    "app_key": ADZUNA_APP_KEY,
+                    "what": query,
+                    "what_exclude": "senior staff principal director intern clearance",
+                    "max_days_old": max_days_old,
+                    "results_per_page": 20,
+                    "full_time": 1,
+                    "sort_by": "date",
+                    "content-type": "application/json",
+                },
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                print(f"[adzuna] Page {page} failed: HTTP {resp.status_code}")
+                break
+            data = resp.json()
+            results = data.get("results", [])
+            if not results:
+                break
+            jobs.extend(results)
+            import time
+            time.sleep(0.3)
+        except Exception as e:
+            print(f"[adzuna] Page {page} failed: {e}")
+            break
+    return jobs
+
+
+def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_ats: bool, freshness_hours: int = 24, skip_adzuna: bool = False):
     discovery_status["running"] = True
     total_new = 0
 
@@ -257,6 +303,65 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
                         "posted_at": job.get("job_posted_at_datetime_utc", ""),
                         "discovered_at": datetime.now(timezone.utc).isoformat(),
                         "source": "jsearch",
+                        "query": query,
+                    }
+                    total_new += db.upsert_jobs([entry])
+
+        # --- Adzuna ---
+        if not skip_adzuna and ADZUNA_APP_ID:
+            from config import SEARCH_KEYWORDS
+            from ats_discovery import _is_us_location
+            qs = queries or SEARCH_KEYWORDS
+            blacklist = load_json(BLACKLIST_PATH)
+            max_days = max(1, int(freshness_hours / 24))
+
+            for query in qs:
+                raw = _fetch_adzuna(query, location="us", pages=2, max_days_old=max_days)
+                print(f"[adzuna] '{query}': {len(raw)} results")
+                for aj in raw:
+                    company_name = (aj.get("company") or {}).get("display_name", "")
+                    title = aj.get("title", "")
+                    link = aj.get("redirect_url", "")
+                    loc = aj.get("location", {}).get("display_name", "")
+
+                    if not link or not title:
+                        continue
+                    if not _is_us_location(loc):
+                        continue
+                    if db.is_company_blocked(company_name):
+                        continue
+
+                    jid = _job_id(company_name, title, link)
+                    desc = aj.get("description", "")
+
+                    # Build a job dict compatible with score_job
+                    job_dict = {
+                        "job_title": title,
+                        "job_description": desc,
+                        "employer_name": company_name,
+                        "job_apply_is_direct": False,
+                    }
+                    if is_blacklisted(job_dict, blacklist):
+                        continue
+                    sc = score_job(job_dict)
+                    if sc < SCORE_THRESHOLD:
+                        continue
+                    skip, _ = llm.hard_skip_check(title, desc, company_name)
+                    if skip:
+                        continue
+
+                    entry = {
+                        "id": jid,
+                        "title": title,
+                        "company": company_name,
+                        "location": loc,
+                        "apply_link": link,
+                        "ats": "other",
+                        "score": sc,
+                        "description": desc[:2000],
+                        "posted_at": aj.get("created", ""),
+                        "discovered_at": datetime.now(timezone.utc).isoformat(),
+                        "source": "adzuna",
                         "query": query,
                     }
                     total_new += db.upsert_jobs([entry])
@@ -346,7 +451,7 @@ def trigger_discovery(body: DiscoverRequest, background_tasks: BackgroundTasks):
     if discovery_status["running"]:
         raise HTTPException(409, "Discovery already running")
     background_tasks.add_task(
-        _run_discovery, body.queries, body.location, body.skip_jsearch, body.skip_ats, body.freshness_hours,
+        _run_discovery, body.queries, body.location, body.skip_jsearch, body.skip_ats, body.freshness_hours, body.skip_adzuna,
     )
     return {"status": "started"}
 
@@ -484,6 +589,39 @@ def match_job(job_id: str):
 # LinkedIn recruiter search builder — US geoId filter
 # ---------------------------------------------------------------------------
 
+LINKEDIN_OVERRIDES_PATH = Path("linkedin_overrides.json")
+
+
+def _load_linkedin_overrides() -> dict:
+    if LINKEDIN_OVERRIDES_PATH.exists():
+        try:
+            return json.loads(LINKEDIN_OVERRIDES_PATH.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def _save_linkedin_overrides(data: dict):
+    LINKEDIN_OVERRIDES_PATH.write_text(json.dumps(data, indent=2))
+
+
+def _get_linkedin_id(company: str) -> tuple[str | None, bool]:
+    """Returns (linkedin_id, is_verified). Checks overrides first, then companies.json."""
+    overrides = _load_linkedin_overrides()
+    key = company.lower().strip()
+    if key in overrides:
+        return overrides[key], True
+
+    try:
+        companies = json.loads(Path("companies.json").read_text())
+        for c in companies:
+            if c.get("name", "").lower() == key and c.get("linkedin_id"):
+                return c["linkedin_id"], False
+    except Exception:
+        pass
+    return None, False
+
+
 @app.get("/api/jobs/{job_id}/linkedin-search")
 def linkedin_search(job_id: str):
     job = db.get_job(job_id)
@@ -491,31 +629,160 @@ def linkedin_search(job_id: str):
         raise HTTPException(404, "Job not found")
 
     company = job.get("company", "")
-    team = job.get("team") or ""
 
-    if team:
-        query = f"{company} {team} recruiter"
+    linkedin_id, verified = _get_linkedin_id(company)
+
+    # Simple "software recruiter" works best — team/title details just narrow results too much
+    if linkedin_id and verified:
+        query = "software recruiter"
     else:
-        query = f"{company} recruiter"
-
-    linkedin_id = None
-    try:
-        companies = json.loads(Path("companies.json").read_text())
-        for c in companies:
-            if c.get("name", "").lower() == company.lower() and c.get("linkedin_id"):
-                linkedin_id = c["linkedin_id"]
-                break
-    except Exception:
-        pass
+        query = f"{company} software recruiter"
 
     url = "https://www.linkedin.com/search/results/people/?"
     url += f"keywords={urllib.parse.quote(query)}"
     url += f"&geoUrn=%5B%22103644278%22%5D"
     url += "&origin=FACETED_SEARCH"
-    if linkedin_id:
+    if linkedin_id and verified:
         url += f"&currentCompany=%5B%22{linkedin_id}%22%5D"
 
-    return {"url": url, "query": query}
+    return {"url": url, "query": query, "company": company, "linkedin_id": linkedin_id, "verified": verified}
+
+
+@app.patch("/api/linkedin-id")
+def update_linkedin_id(body: dict):
+    company = body.get("company", "").strip()
+    lid = body.get("linkedin_id", "").strip()
+    if not company or not lid:
+        raise HTTPException(400, "company and linkedin_id required")
+    overrides = _load_linkedin_overrides()
+    overrides[company.lower()] = lid
+    _save_linkedin_overrides(overrides)
+    return {"ok": True, "company": company, "linkedin_id": lid}
+
+
+@app.get("/api/jobs/{job_id}/linkedin-leaders")
+def linkedin_leaders(job_id: str, role: str = "hiring"):
+    """
+    LinkedIn search for people who can help get hired.
+    role param lets the frontend switch between search strategies:
+      - hiring  = engineering managers / directors (decision makers)
+      - team    = staff/senior engineers on the team (referral sources)
+    """
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    company = job.get("company", "")
+    team = job.get("team") or ""
+    title = job.get("title", "")
+
+    # Extract a useful team/domain hint from the job title
+    # e.g. "Senior Software Engineer, Payments" -> "Payments"
+    team_hint = team
+    if not team_hint:
+        # Try to grab the part after a comma/dash in the title
+        for sep in [",", " - ", " – ", " | "]:
+            if sep in title:
+                team_hint = title.split(sep, 1)[1].strip()
+                break
+
+    linkedin_id, verified = _get_linkedin_id(company)
+
+    if role == "team":
+        # Find senior/staff engineers on the team who can refer
+        if team_hint:
+            title_terms = f"software engineer {team_hint}"
+        else:
+            title_terms = "senior software engineer"
+    else:
+        # Find hiring decision makers
+        if team_hint:
+            title_terms = f"engineering manager {team_hint}"
+        else:
+            title_terms = "engineering manager"
+
+    # If we have verified company ID, don't waste keywords on company name
+    if linkedin_id and verified:
+        keywords = title_terms
+    else:
+        keywords = f"{company} {title_terms}"
+
+    url = "https://www.linkedin.com/search/results/people/?"
+    url += f"keywords={urllib.parse.quote(keywords)}"
+    url += "&geoUrn=%5B%22103644278%22%5D"
+    url += "&origin=FACETED_SEARCH"
+    if linkedin_id and verified:
+        url += f"&currentCompany=%5B%22{linkedin_id}%22%5D"
+
+    return {"url": url, "query": keywords, "company": company, "role": role}
+
+
+# ---------------------------------------------------------------------------
+# Hunter.io — email finder
+# ---------------------------------------------------------------------------
+
+HUNTER_API_KEY = os.getenv("HUNTER_API_KEY", "")
+
+
+@app.get("/api/jobs/{job_id}/find-emails")
+def find_emails(job_id: str):
+    """Use Hunter.io to find emails at the company domain."""
+    if not HUNTER_API_KEY:
+        raise HTTPException(400, "HUNTER_API_KEY not configured. Add it to .env")
+
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    company = job.get("company", "")
+
+    # Step 1: Find the company domain via Hunter domain-search
+    try:
+        search_resp = http_requests.get(
+            "https://api.hunter.io/v2/domain-search",
+            params={
+                "company": company,
+                "api_key": HUNTER_API_KEY,
+                "limit": 10,
+            },
+            timeout=15,
+        )
+        data = search_resp.json()
+
+        if search_resp.status_code != 200:
+            errors = data.get("errors", [])
+            msg = errors[0].get("details", "Hunter API error") if errors else "Hunter API error"
+            raise HTTPException(search_resp.status_code, msg)
+
+        result = data.get("data", {})
+        domain = result.get("domain", "")
+        pattern = result.get("pattern", "")
+        emails = result.get("emails", [])
+
+        people = []
+        for e in emails:
+            person = {
+                "email": e.get("value", ""),
+                "first_name": e.get("first_name", ""),
+                "last_name": e.get("last_name", ""),
+                "position": e.get("position", ""),
+                "department": e.get("department", ""),
+                "linkedin": e.get("linkedin", ""),
+                "confidence": e.get("confidence", 0),
+            }
+            people.append(person)
+
+        return {
+            "company": company,
+            "domain": domain,
+            "pattern": pattern,
+            "people": people,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Hunter.io lookup failed: {e}")
 
 
 # ---------------------------------------------------------------------------

@@ -49,7 +49,10 @@ NON_US_CITIES = [
     "tokyo", "singapore", "seoul", "beijing", "shanghai", "sao paulo", "mexico city",
     "bogota", "buenos aires", "lisbon", "barcelona", "madrid", "rome", "milan",
     "zurich", "geneva", "vienna", "copenhagen", "oslo", "helsinki", "bucharest",
-    "brisbane", "auckland", "wellington",
+    "brisbane", "auckland", "wellington", "kuala lumpur", "jakarta", "manila",
+    "ho chi minh", "hanoi", "taipei", "bangkok", "guadalajara", "monterrey",
+    "cape town", "johannesburg", "nairobi", "lagos", "cairo", "riyadh", "dubai",
+    "abu dhabi", "doha", "muscat",
 ]
 
 
@@ -411,6 +414,12 @@ def fetch_workday(slug: str, company_name: str, wd_num: int = 5, site: str = "")
             jd_url = f"{base_url}/job/{title_slug}/{j.get('bulletFields', [''])[0] if j.get('bulletFields') else ''}"
 
         loc_text = j.get("locationsText", "")
+        # "N Locations" is vague — extract primary location from externalPath
+        if re.match(r"^\d+\s+locations?$", loc_text, re.IGNORECASE):
+            path_loc = (ext_path.split("/job/")[1].split("/")[0] if "/job/" in ext_path else "")
+            path_loc = path_loc.replace("---", " - ").replace("-", " ")
+            if path_loc:
+                loc_text = path_loc
         if not _is_us_location(loc_text):
             continue
 

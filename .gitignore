@@ -11,3 +11,4 @@ resumes/
 .claude/
 server.log
 *.log
+linkedin_overrides.json
