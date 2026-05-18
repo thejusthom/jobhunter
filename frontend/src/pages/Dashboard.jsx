@@ -21,10 +21,10 @@ export default function Dashboard() {
 
   useEffect(() => { load() }, [])
 
-  const runDiscovery = async (skipJsearch, skipAts) => {
+  const runDiscovery = async ({ jsearch = true, ats = true, adzuna = true } = {}) => {
     setDiscovering(true)
     try {
-      await api.triggerDiscovery({ skip_jsearch: skipJsearch, skip_ats: skipAts, freshness_hours: freshness })
+      await api.triggerDiscovery({ skip_jsearch: !jsearch, skip_ats: !ats, skip_adzuna: !adzuna, freshness_hours: freshness })
       const poll = setInterval(async () => {
         const s = await api.getDiscoveryStatus()
         if (!s.running) {
@@ -105,25 +105,32 @@ export default function Dashboard() {
 
           <div className="flex gap-2 flex-wrap">
             <button
-              onClick={() => runDiscovery(false, false)}
+              onClick={() => runDiscovery()}
               disabled={discovering}
               className="bg-accent hover:bg-accent-hover disabled:opacity-50 text-white font-medium text-sm px-4 py-2 rounded-lg transition-all duration-150"
             >
               {discovering ? 'Running...' : 'Run All'}
             </button>
             <button
-              onClick={() => runDiscovery(true, false)}
+              onClick={() => runDiscovery({ jsearch: false, adzuna: false })}
               disabled={discovering}
               className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
             >
               ATS Only
             </button>
             <button
-              onClick={() => runDiscovery(false, true)}
+              onClick={() => runDiscovery({ ats: false, adzuna: false })}
               disabled={discovering}
               className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
             >
               JSearch Only
+            </button>
+            <button
+              onClick={() => runDiscovery({ jsearch: false, ats: false })}
+              disabled={discovering}
+              className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
+            >
+              Adzuna Only
             </button>
           </div>
         </div>
