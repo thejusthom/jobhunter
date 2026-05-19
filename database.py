@@ -99,11 +99,29 @@ def init_db():
             created_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS collected_emails (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company TEXT NOT NULL,
+            domain TEXT DEFAULT '',
+            email TEXT NOT NULL,
+            first_name TEXT DEFAULT '',
+            last_name TEXT DEFAULT '',
+            position TEXT DEFAULT '',
+            department TEXT DEFAULT '',
+            linkedin_url TEXT DEFAULT '',
+            confidence INTEGER DEFAULT 0,
+            job_id TEXT DEFAULT NULL,
+            job_title TEXT DEFAULT '',
+            collected_at TEXT NOT NULL,
+            FOREIGN KEY (job_id) REFERENCES jobs(id)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
         CREATE INDEX IF NOT EXISTS idx_jobs_score ON jobs(score DESC);
         CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status);
         CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(due_date);
         CREATE INDEX IF NOT EXISTS idx_reminders_completed ON reminders(completed);
+        CREATE INDEX IF NOT EXISTS idx_collected_emails_company ON collected_emails(company);
         """)
 
 
@@ -127,7 +145,7 @@ def migrate_json_to_db():
                 """, (
                     j.get("id"), j.get("title", ""), j.get("company", ""),
                     j.get("location", ""), j.get("apply_link", ""), j.get("ats", ""),
-                    j.get("score", 0), j.get("description", "")[:2000],
+                    j.get("score", 0), j.get("description", ""),
                     j.get("posted_at", ""), j.get("discovered_at", ""),
                     j.get("source", ""), j.get("query", ""), j.get("status", "pending"),
                 ))
@@ -191,7 +209,7 @@ def upsert_jobs(entries: list):
             """, (
                 j.get("id"), j.get("title", ""), j.get("company", ""),
                 j.get("location", ""), j.get("apply_link", ""), j.get("ats", ""),
-                j.get("score", 0), j.get("description", "")[:2000],
+                j.get("score", 0), j.get("description", ""),
                 j.get("posted_at", ""), j.get("discovered_at", ""),
                 j.get("source", ""), j.get("query", ""),
             ))
@@ -517,6 +535,56 @@ def fix_workday_urls(companies: list):
                 db.execute("UPDATE jobs SET apply_link = ? WHERE id = ?", (new_url, r["id"]))
                 fixed += 1
         return fixed
+
+
+# --- Collected emails ---
+
+def save_collected_emails(company: str, domain: str, people: list, job_id: str = None, job_title: str = ""):
+    now = datetime.now(timezone.utc).isoformat()
+    inserted = 0
+    with get_db() as db:
+        for p in people:
+            email = p.get("email", "")
+            if not email:
+                continue
+            # Skip if already collected
+            existing = db.execute(
+                "SELECT 1 FROM collected_emails WHERE email = ?", (email,)
+            ).fetchone()
+            if existing:
+                continue
+            db.execute("""
+                INSERT INTO collected_emails (company, domain, email, first_name, last_name,
+                    position, department, linkedin_url, confidence, job_id, job_title, collected_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                company, domain, email,
+                p.get("first_name", ""), p.get("last_name", ""),
+                p.get("position", ""), p.get("department", ""),
+                p.get("linkedin", ""), p.get("confidence", 0),
+                job_id, job_title, now,
+            ))
+            inserted += 1
+    return inserted
+
+
+def get_collected_emails(company: str = None, limit: int = 200, offset: int = 0):
+    clauses, params = [], []
+    if company:
+        clauses.append("LOWER(company) LIKE ?")
+        params.append(f"%{company.lower()}%")
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    params.extend([limit, offset])
+    with get_db() as db:
+        rows = db.execute(
+            f"SELECT * FROM collected_emails {where} ORDER BY collected_at DESC LIMIT ? OFFSET ?",
+            params
+        ).fetchall()
+        total = db.execute(
+            f"SELECT COUNT(*) as count FROM collected_emails {where.replace('LIMIT ? OFFSET ?', '') if where else ''}",
+            params[:-2] if clauses else []
+        ).fetchone()["count"]
+        return {"emails": [dict(r) for r in rows], "total": total}
 
 
 if __name__ == "__main__":
