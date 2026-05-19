@@ -1,6 +1,6 @@
 """
 ATS Discovery Module
-Queries Greenhouse, Lever, Ashby, Amazon, Workday, and Pinpoint public APIs.
+Queries Greenhouse, Lever, Ashby, Amazon, Workday, Pinpoint, SmartRecruiters, and Oracle Cloud HCM public APIs.
 No API key required — these are open public endpoints.
 Filters to US-based jobs only.
 """
@@ -499,6 +499,256 @@ def fetch_pinpoint(slug: str, company_name: str) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Oracle Cloud HCM — public REST API
+# ---------------------------------------------------------------------------
+
+def fetch_oracle_hcm(slug: str, company_name: str, site: str = "CX_1001") -> list:
+    """Fetch jobs from Oracle Cloud HCM public REST API.
+    slug = subdomain prefix, e.g. 'jpmc' for jpmc.fa.oraclecloud.com
+    site = site number, e.g. 'CX_1001'
+    """
+    # Determine base URL — some use .fa.oraclecloud.com, some .fa.us2.oraclecloud.com
+    base_urls = [
+        f"https://{slug}.fa.oraclecloud.com",
+        f"https://{slug}.fa.us2.oraclecloud.com",
+    ]
+
+    data = None
+    base_url = None
+    for base in base_urls:
+        api_url = (
+            f"{base}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
+            f"?onlyData=true&expand=requisitionList.secondaryLocations"
+            f"&finder=findReqs;siteNumber={site},keyword=software engineer,selectedPostingTypes="
+            f"&limit=25&offset=0"
+        )
+        try:
+            resp = requests.get(api_url, timeout=15, headers={"Accept": "application/json"})
+            if resp.status_code == 200:
+                data = resp.json()
+                items = data.get("items", [])
+                if items and items[0].get("requisitionList"):
+                    base_url = base
+                    break
+        except Exception:
+            continue
+
+    if not data or not base_url:
+        print(f"[ats] Oracle HCM {company_name}: no accessible API endpoint found")
+        return []
+
+    item = data["items"][0]
+    total = item.get("TotalJobsCount", 0)
+    reqs = item.get("requisitionList", [])
+    print(f"[ats] Oracle HCM {company_name}: {total} total jobs, {len(reqs)} in first page")
+
+    results = []
+    for j in reqs:
+        loc = j.get("PrimaryLocation", "")
+        country = j.get("PrimaryLocationCountry", "")
+
+        # US filter
+        if country and country.upper() != "US":
+            continue
+        if not country and not _is_us_location(loc):
+            continue
+
+        # Freshness
+        posted = j.get("PostedDate", "")
+        if posted:
+            try:
+                dt = datetime.fromisoformat(posted + "T00:00:00+00:00")
+                if not _is_fresh(dt):
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        title = j.get("Title", "")
+        job_id = j.get("Id", "")
+        description = j.get("ShortDescriptionStr", "") or ""
+        qualifications = j.get("ExternalQualificationsStr", "") or ""
+        responsibilities = j.get("ExternalResponsibilitiesStr", "") or ""
+        full_desc = f"{description}\n{responsibilities}\n{qualifications}".strip()
+
+        apply_url = f"{base_url}/hcmUI/CandidateExperience/en/sites/{site}/job/{job_id}"
+
+        results.append({
+            "employer_name": company_name,
+            "job_title": title,
+            "job_description": full_desc,
+            "job_apply_link": apply_url,
+            "job_city": loc,
+            "job_country": "US",
+            "job_apply_is_direct": True,
+            "job_posted_at_datetime_utc": posted + "T00:00:00Z" if posted else "",
+            "_ats": "oracle_hcm",
+        })
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# SmartRecruiters — public postings API
+# ---------------------------------------------------------------------------
+
+def fetch_smartrecruiters(slug: str, company_name: str) -> list:
+    """Fetch jobs from SmartRecruiters public API (no key needed)."""
+    results = []
+    offset = 0
+    limit = 100
+
+    while True:
+        url = f"https://api.smartrecruiters.com/v1/companies/{slug}/postings"
+        try:
+            resp = requests.get(url, params={"offset": offset, "limit": limit}, timeout=15)
+            if resp.status_code != 200:
+                print(f"[ats] SmartRecruiters {company_name} failed: HTTP {resp.status_code}")
+                break
+            data = resp.json()
+            postings = data.get("content", [])
+            if not postings:
+                break
+        except Exception as e:
+            print(f"[ats] SmartRecruiters {company_name} failed: {e}")
+            break
+
+        for j in postings:
+            # Location filter
+            loc = j.get("location", {})
+            country = loc.get("country", "")
+            city = loc.get("city", "")
+            region = loc.get("region", "")
+            loc_text = f"{city}, {region}" if city else region or ""
+
+            if country and country.upper() not in ("US", "USA"):
+                continue
+            if not country and not _is_us_location(loc_text):
+                continue
+
+            # Freshness filter
+            created = j.get("releasedDate", "") or j.get("createdOn", "")
+            if created:
+                try:
+                    dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                    if not _is_fresh(dt):
+                        continue
+                except (ValueError, TypeError):
+                    pass
+
+            title = j.get("name", "")
+            job_id = j.get("id", "")
+
+            # Fetch full posting detail for description + apply URL
+            description = ""
+            apply_url = f"https://jobs.smartrecruiters.com/{slug}/{job_id}"
+            try:
+                detail_url = f"https://api.smartrecruiters.com/v1/companies/{slug}/postings/{job_id}"
+                detail_resp = requests.get(detail_url, timeout=10)
+                if detail_resp.status_code == 200:
+                    detail = detail_resp.json()
+                    # Get apply URL
+                    if detail.get("applyUrl"):
+                        apply_url = detail["applyUrl"]
+                    # Get description from jobAd sections
+                    sections = detail.get("jobAd", {}).get("sections", {})
+                    for section_key in ("jobDescription", "qualifications", "additionalInformation"):
+                        sec = sections.get(section_key, {})
+                        if sec and sec.get("text"):
+                            description += sec["text"] + "\n\n"
+                    description = description.strip()
+            except Exception:
+                pass  # use empty desc if detail fetch fails
+
+            results.append({
+                "employer_name": company_name,
+                "job_title": title,
+                "job_description": description,
+                "job_apply_link": apply_url,
+                "job_city": loc_text,
+                "job_country": "US",
+                "job_apply_is_direct": True,
+                "job_posted_at_datetime_utc": created,
+                "_ats": "smartrecruiters",
+            })
+
+        # Pagination
+        total = data.get("totalFound", 0)
+        offset += limit
+        if offset >= total:
+            break
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# JSearch fallback — for companies without a direct ATS API
+# Uses the same JSearch/RapidAPI key from discovery.py
+# ---------------------------------------------------------------------------
+
+def fetch_jsearch_company(company_name: str) -> list:
+    """Search JSearch for jobs at a specific company (fallback for custom portals)."""
+    from discovery import JSEARCH_KEY, JSEARCH_URL
+    if not JSEARCH_KEY:
+        return []
+
+    headers = {
+        "X-RapidAPI-Key": JSEARCH_KEY,
+        "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
+    }
+    params = {
+        "query": f"software engineer at {company_name}",
+        "location": "United States",
+        "page": "1",
+        "num_pages": "1",
+        "employment_types": "FULLTIME",
+        "date_posted": "today",
+    }
+
+    try:
+        resp = requests.get(JSEARCH_URL, headers=headers, params=params, timeout=20)
+        resp.raise_for_status()
+        data = resp.json().get("data", {}).get("jobs", [])
+    except Exception as e:
+        print(f"[ats] JSearch fallback for {company_name} failed: {e}")
+        return []
+
+    results = []
+    for j in data:
+        loc = j.get("job_city", "") or ""
+        country = j.get("job_country", "")
+        if country and country.upper() not in ("US", "USA"):
+            continue
+
+        # Only include jobs actually from this company
+        employer = j.get("employer_name", "")
+        if company_name.lower() not in employer.lower():
+            continue
+
+        posted = j.get("job_posted_at_datetime_utc", "")
+        if posted:
+            try:
+                dt = datetime.fromisoformat(posted.replace("Z", "+00:00"))
+                if not _is_fresh(dt):
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        results.append({
+            "employer_name": j.get("employer_name", company_name),
+            "job_title": j.get("job_title", ""),
+            "job_description": j.get("job_description", ""),
+            "job_apply_link": j.get("job_apply_link", ""),
+            "job_city": loc,
+            "job_country": "US",
+            "job_apply_is_direct": j.get("job_apply_is_direct", False),
+            "job_posted_at_datetime_utc": posted,
+            "_ats": "jsearch",
+        })
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -517,10 +767,16 @@ def discover_from_ats(companies_path: str = None) -> list:
 
     for company in companies:
         name = company.get("name", "")
-        ats = company.get("ats", "").lower()
+        ats = (company.get("ats") or "").lower()
         slug = company.get("slug", "")
 
-        if not (name and ats and slug):
+        # Skip companies with no ATS and no name
+        if not name:
+            continue
+        # Companies with ats=null use JSearch fallback
+        if not ats:
+            ats = "jsearch"
+        if ats != "jsearch" and not slug:
             continue
 
         print(f"[ats] {name} ({ats})")
@@ -539,6 +795,13 @@ def discover_from_ats(companies_path: str = None) -> list:
             raw_jobs = fetch_workday(slug, name, wd_num, site)
         elif ats == "pinpoint":
             raw_jobs = fetch_pinpoint(slug, name)
+        elif ats == "smartrecruiters":
+            raw_jobs = fetch_smartrecruiters(slug, name)
+        elif ats == "oracle_hcm":
+            site = company.get("site", "CX_1001")
+            raw_jobs = fetch_oracle_hcm(slug, name, site)
+        elif ats == "jsearch":
+            raw_jobs = fetch_jsearch_company(name)
         else:
             print(f"[ats] Unknown ATS type '{ats}' for {name} — skipping")
             continue
@@ -583,7 +846,7 @@ def discover_from_ats(companies_path: str = None) -> list:
                 "ats": ats,
                 "posted_at": job.get("job_posted_at_datetime_utc", ""),
                 "discovered_at": datetime.now(timezone.utc).isoformat(),
-                "description": job.get("job_description", "")[:1000],
+                "description": job.get("job_description", ""),
                 "source": ats,
                 "status": "pending",
             }
