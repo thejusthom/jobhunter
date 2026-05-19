@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../api'
+import LinkedInIdEditor from '../components/LinkedInIdEditor'
 
 const STATUS_COLORS = {
   pending: 'bg-accent-muted text-accent',
@@ -28,7 +29,6 @@ export default function JobQueue() {
   const [matchResult, setMatchResult] = useState(null)
   const [loading, setLoading] = useState(true)
   const [followUp, setFollowUp] = useState(null)
-  const [linkedinPrompt, setLinkedinPrompt] = useState(null) // { company, currentId, verified }
 
   const load = useCallback(() => {
     setLoading(true)
@@ -133,19 +133,6 @@ export default function JobQueue() {
     try {
       const result = await api.linkedinSearch(job.id)
       window.open(result.url, '_blank')
-      // If the ID isn't verified, prompt the user to confirm/update it
-      if (!result.verified) {
-        setLinkedinPrompt({ company: result.company, currentId: result.linkedin_id || '', verified: false })
-      }
-    } catch (e) {
-      alert(e.message)
-    }
-  }
-
-  const handleSaveLinkedInId = async (company, newId) => {
-    try {
-      await api.updateLinkedInId(company, newId)
-      setLinkedinPrompt(null)
     } catch (e) {
       alert(e.message)
     }
@@ -290,9 +277,22 @@ export default function JobQueue() {
       {selected && (
         <div className="w-96 shrink-0 bg-surface-raised border border-border rounded-xl p-5 sticky top-20 self-start max-h-[calc(100vh-6rem)] overflow-y-auto">
           <h2 className="text-text-primary font-semibold text-lg leading-tight">{selected.title}</h2>
-          <p className="text-text-tertiary text-sm mt-1 mb-4">{selected.company} · {selected.location}</p>
+          <div className="flex items-center gap-2 mt-1 mb-4">
+            <p className="text-text-tertiary text-sm">{selected.company} · {selected.location}</p>
+            <LinkedInIdEditor company={selected.company} compact />
+          </div>
 
           <div className="flex gap-2 mb-3 flex-wrap">
+            {selected.apply_link && (
+              <a
+                href={selected.apply_link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="bg-accent hover:bg-accent-hover text-white font-medium text-sm px-5 py-2 rounded-lg transition-all duration-150 inline-block"
+              >
+                Open Link
+              </a>
+            )}
             {selected.match_pct == null && (
               <button
                 onClick={() => handleMatch(selected)}
@@ -302,72 +302,36 @@ export default function JobQueue() {
                 {matching === selected.id ? 'Matching...' : 'Match %'}
               </button>
             )}
-            <button
-              onClick={() => handleLinkedIn(selected)}
-              className="bg-surface-overlay hover:bg-border text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
-            >
-              Find Recruiters
-            </button>
-            <button
-              onClick={() => handleLinkedInLeaders(selected, 'hiring')}
-              className="bg-surface-overlay hover:bg-border text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
-            >
-              Hiring Manager
-            </button>
-            <button
-              onClick={() => handleLinkedInLeaders(selected, 'team')}
-              className="bg-surface-overlay hover:bg-border text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
-            >
-              Team Referral
-            </button>
-            <button
-              onClick={() => handleFindEmails(selected)}
-              disabled={emailLoading}
-              className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
-            >
-              {emailLoading ? 'Finding...' : 'Find Emails'}
-            </button>
-            {selected.apply_link && (
-              <a
-                href={selected.apply_link}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="bg-surface-overlay hover:bg-border text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border inline-block"
-              >
-                Open Link
-              </a>
+            {selected.team && (
+              <>
+                <button
+                  onClick={() => handleLinkedIn(selected)}
+                  className="bg-surface-overlay hover:bg-border text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
+                >
+                  Find Recruiters
+                </button>
+                <button
+                  onClick={() => handleLinkedInLeaders(selected, 'hiring')}
+                  className="bg-surface-overlay hover:bg-border text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
+                >
+                  Hiring Manager
+                </button>
+                <button
+                  onClick={() => handleLinkedInLeaders(selected, 'team')}
+                  className="bg-surface-overlay hover:bg-border text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
+                >
+                  Team Referral
+                </button>
+                <button
+                  onClick={() => handleFindEmails(selected)}
+                  disabled={emailLoading}
+                  className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
+                >
+                  {emailLoading ? 'Finding...' : 'Find Emails'}
+                </button>
+              </>
             )}
           </div>
-
-          {linkedinPrompt && linkedinPrompt.company === selected.company && (
-            <div className="bg-surface border border-accent/20 rounded-lg p-3 mb-3">
-              <p className="text-xs text-text-tertiary mb-2">
-                Wrong recruiter results? Paste the correct LinkedIn company ID from the URL
-                <span className="text-text-muted block mt-0.5">
-                  (currentCompany=%5B"<span className="text-accent">ID_HERE</span>"%5D)
-                </span>
-              </p>
-              <form onSubmit={(e) => {
-                e.preventDefault()
-                const id = e.target.elements.lid.value.trim()
-                if (id) handleSaveLinkedInId(linkedinPrompt.company, id)
-              }} className="flex gap-2">
-                <input
-                  name="lid"
-                  type="text"
-                  defaultValue={linkedinPrompt.currentId}
-                  placeholder="e.g. 74126343"
-                  className="flex-1 text-xs bg-surface-overlay border border-border rounded-md px-2.5 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50"
-                />
-                <button type="submit" className="text-xs px-3 py-1.5 bg-accent hover:bg-accent-hover text-white rounded-md transition-all">
-                  Save
-                </button>
-                <button type="button" onClick={() => setLinkedinPrompt(null)} className="text-xs px-2 py-1.5 text-text-muted hover:text-text-tertiary">
-                  ✕
-                </button>
-              </form>
-            </div>
-          )}
 
           <div className="flex flex-wrap gap-1.5 mb-5">
             <button
@@ -480,9 +444,22 @@ export default function JobQueue() {
                 </div>
               )}
 
+              {(selected.team || selected.project) && (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {selected.team && (
+                    <span className="text-xs px-2.5 py-1 rounded-md bg-blue-900/20 text-blue-400 font-medium">
+                      Team: {selected.team}
+                    </span>
+                  )}
+                  {selected.project && (
+                    <span className="text-xs px-2.5 py-1 rounded-md bg-purple-900/20 text-purple-400 font-medium">
+                      Project: {selected.project}
+                    </span>
+                  )}
+                </div>
+              )}
+
               {selected.match_summary && <p className="text-sm text-text-secondary leading-relaxed">{selected.match_summary}</p>}
-              {selected.team && <p className="text-xs text-text-muted mt-2">Team: {selected.team}</p>}
-              {selected.project && <p className="text-xs text-text-muted">Project: {selected.project}</p>}
             </div>
           )}
 
@@ -530,7 +507,10 @@ export default function JobQueue() {
           {selected.description && (
             <div className="border-t border-border pt-4">
               <h3 className="text-sm font-medium text-text-secondary mb-2">Description</h3>
-              <p className="text-xs text-text-tertiary whitespace-pre-wrap max-h-64 overflow-y-auto leading-relaxed">{selected.description}</p>
+              <div
+                className="text-xs text-text-tertiary max-h-96 overflow-y-auto leading-relaxed prose prose-invert prose-xs prose-p:my-1 prose-li:my-0.5 prose-ul:my-1 prose-ol:my-1"
+                dangerouslySetInnerHTML={{ __html: selected.description }}
+              />
             </div>
           )}
         </div>

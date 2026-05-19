@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api'
+import LinkedInIdEditor from '../components/LinkedInIdEditor'
 
 const STATUSES = ['applied', 'interview', 'offer', 'rejected', 'withdrawn', 'ghosted']
 
@@ -8,6 +9,8 @@ export default function Applications() {
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState(null)
+  const [emailResults, setEmailResults] = useState(null)
+  const [emailLoading, setEmailLoading] = useState(null)
   const [form, setForm] = useState({ title: '', company: '', location: '', apply_link: '', source: 'manual', notes: '', salary_min: '', salary_max: '' })
 
   const load = () => {
@@ -38,6 +41,35 @@ export default function Applications() {
     await api.updateApplication(id, { notes })
     setEditing(null)
     load()
+  }
+
+  const handleLinkedInRecruiter = (app) => {
+    const query = `${app.company} software recruiter`
+    const url = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(query)}&geoUrn=%5B%22103644278%22%5D&origin=FACETED_SEARCH`
+    window.open(url, '_blank')
+  }
+
+  const handleLinkedInManager = (app) => {
+    const query = `${app.company} engineering manager`
+    const url = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(query)}&geoUrn=%5B%22103644278%22%5D&origin=FACETED_SEARCH`
+    window.open(url, '_blank')
+  }
+
+  const handleFindEmails = async (app) => {
+    if (!app.job_id) {
+      alert('No linked job — emails require a job with company info')
+      return
+    }
+    setEmailLoading(app.id)
+    setEmailResults(null)
+    try {
+      const result = await api.findEmails(app.job_id)
+      setEmailResults({ ...result, appId: app.id })
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setEmailLoading(null)
+    }
   }
 
   const inputClass = "bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:border-accent/50 outline-none transition-colors duration-150"
@@ -80,7 +112,10 @@ export default function Applications() {
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <div className="font-medium text-text-primary text-sm">{app.title}</div>
-                  <div className="text-sm text-text-tertiary">{app.company} {app.location && `· ${app.location}`}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-text-tertiary">{app.company} {app.location && `· ${app.location}`}</span>
+                    <LinkedInIdEditor company={app.company} compact />
+                  </div>
                 </div>
                 <select
                   value={app.status}
@@ -99,6 +134,51 @@ export default function Applications() {
                   <a href={app.apply_link} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">Link</a>
                 )}
               </div>
+              <div className="flex gap-1.5 mt-2 flex-wrap">
+                <button
+                  onClick={() => handleLinkedInRecruiter(app)}
+                  className="text-xs px-2.5 py-1 rounded-md bg-surface-overlay hover:bg-border text-text-secondary border border-border transition-all"
+                >
+                  Find Recruiters
+                </button>
+                <button
+                  onClick={() => handleLinkedInManager(app)}
+                  className="text-xs px-2.5 py-1 rounded-md bg-surface-overlay hover:bg-border text-text-secondary border border-border transition-all"
+                >
+                  Hiring Manager
+                </button>
+                <button
+                  onClick={() => handleFindEmails(app)}
+                  disabled={emailLoading === app.id}
+                  className="text-xs px-2.5 py-1 rounded-md bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary border border-border transition-all"
+                >
+                  {emailLoading === app.id ? 'Finding...' : 'Find Emails'}
+                </button>
+              </div>
+              {emailResults && emailResults.appId === app.id && (
+                <div className="bg-surface border border-border rounded-lg p-3 mt-2">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-xs font-medium text-text-secondary">Emails — {emailResults.company}</span>
+                    <button onClick={() => setEmailResults(null)} className="text-text-muted hover:text-text-tertiary text-xs">x</button>
+                  </div>
+                  {emailResults.pattern && (
+                    <p className="text-xs text-text-muted mb-2">Pattern: <span className="text-accent">{emailResults.pattern}</span></p>
+                  )}
+                  {emailResults.people.length > 0 ? (
+                    <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                      {emailResults.people.map((p, i) => (
+                        <div key={i} className="text-xs border-t border-border/30 pt-1">
+                          <span className="text-text-primary font-medium">{p.first_name} {p.last_name}</span>
+                          {p.position && <span className="text-text-muted ml-2">{p.position}</span>}
+                          <div><a href={`mailto:${p.email}`} className="text-accent hover:underline">{p.email}</a></div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-text-muted">No emails found.</p>
+                  )}
+                </div>
+              )}
               {editing === app.id ? (
                 <div className="mt-2">
                   <textarea

@@ -24,6 +24,7 @@ export const api = {
   linkedinSearch: (id) => request(`/jobs/${id}/linkedin-search`),
   linkedinLeaders: (id, role = 'hiring') => request(`/jobs/${id}/linkedin-leaders?role=${role}`),
   findEmails: (id) => request(`/jobs/${id}/find-emails`),
+  getLinkedInId: (company) => request(`/linkedin-id?company=${encodeURIComponent(company)}`),
   updateLinkedInId: (company, linkedin_id) => request('/linkedin-id', { method: 'PATCH', body: JSON.stringify({ company, linkedin_id }) }),
 
   getApplications: (params = {}) => {
@@ -49,6 +50,10 @@ export const api = {
   getEvaluations: (limit = 50) => request(`/evaluations?limit=${limit}`),
   getAnalytics: () => request('/analytics'),
   cleanupNonUs: () => request('/jobs/cleanup-non-us', { method: 'POST' }),
+  getCollectedEmails: (params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    return request(`/collected-emails${q ? '?' + q : ''}`);
+  },
 
   clearQueue: () => request('/jobs/clear-queue', { method: 'POST' }),
   blockCompany: (company, reason = 'no sponsorship') => request('/blocked-companies', { method: 'POST', body: JSON.stringify({ company, reason }) }),
