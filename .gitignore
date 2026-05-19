@@ -12,3 +12,8 @@ resumes/
 server.log
 *.log
 linkedin_overrides.json
+
+# Vite boilerplate
+frontend/src/App.css
+frontend/src/assets/
+frontend/README.md
