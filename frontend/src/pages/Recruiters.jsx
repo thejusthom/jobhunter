@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api'
+import LinkedInIdEditor from '../components/LinkedInIdEditor'
 
 export default function Recruiters() {
   const [recruiters, setRecruiters] = useState([])
@@ -59,7 +60,10 @@ export default function Recruiters() {
               <div className="flex items-start justify-between">
                 <div>
                   <div className="font-medium text-text-primary text-sm">{r.name}</div>
-                  <div className="text-sm text-text-tertiary">{r.company}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-text-tertiary">{r.company}</span>
+                    {r.company && <LinkedInIdEditor company={r.company} compact />}
+                  </div>
                 </div>
                 <div className="flex gap-3">
                   {r.linkedin_url && (
