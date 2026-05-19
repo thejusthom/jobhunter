@@ -299,7 +299,7 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
                         "apply_link": link,
                         "ats": ats_name,
                         "score": sc,
-                        "description": job.get("job_description", "")[:2000],
+                        "description": job.get("job_description", ""),
                         "posted_at": job.get("job_posted_at_datetime_utc", ""),
                         "discovered_at": datetime.now(timezone.utc).isoformat(),
                         "source": "jsearch",
@@ -358,7 +358,7 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
                         "apply_link": link,
                         "ats": "other",
                         "score": sc,
-                        "description": desc[:2000],
+                        "description": desc,
                         "posted_at": aj.get("created", ""),
                         "discovered_at": datetime.now(timezone.utc).isoformat(),
                         "source": "adzuna",
@@ -432,7 +432,7 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
                         "apply_link": job.get("job_apply_link"),
                         "ats": ats,
                         "score": sc,
-                        "description": job.get("job_description", "")[:2000],
+                        "description": job.get("job_description", ""),
                         "posted_at": job.get("job_posted_at_datetime_utc", ""),
                         "discovered_at": datetime.now(timezone.utc).isoformat(),
                         "source": ats,
@@ -506,45 +506,69 @@ def match_job(job_id: str):
                 "team": None, "project": None}
 
     system_prompt = (
-        "You are a strict technical recruiter evaluating candidate-job fit.\n\n"
-        "Analyze the resume against the job description REALISTICALLY. Do not inflate scores.\n\n"
+        "You are a brutally honest technical recruiter evaluating candidate-job fit.\n\n"
+        "CANDIDATE PROFILE (memorize this):\n"
+        "- MS in Software Engineering (Northeastern, graduating Dec 2025)\n"
+        "- 3+ years professional experience at IBM (Associate + Application Developer)\n"
+        "- Current: AI Software Engineer at Humanitarians AI (nonprofit)\n"
+        "- NO PhD. NO security clearance. NO 5+ years experience.\n"
+        "- Strong: Java/Spring Boot, Python, React/TypeScript, Node.js, LLM/RAG/agents\n"
+        "- Weak: No C/C++, no robotics, no embedded systems, no ML research publications\n"
+        "- Needs visa sponsorship (international student on OPT)\n\n"
         "Respond with ONLY a valid JSON object (no markdown fences):\n"
         "{\n"
         '  "match_pct": <integer 0-100>,\n'
-        '  "summary": "<2-3 sentences: key strengths, notable gaps, overall assessment>",\n'
-        '  "team": "<team name from JD, or null if not mentioned>",\n'
-        '  "project": "<project/product name from JD, or null if not mentioned>",\n'
-        '  "key_strengths": ["<strength1>", "<strength2>", "<strength3>"],\n'
+        '  "summary": "<2-3 sentences: key strengths, notable gaps, honest assessment>",\n'
+        '  "team": "<team name from JD, or null>",\n'
+        '  "project": "<project/product name from JD, or null>",\n'
+        '  "key_strengths": ["<strength1>", "<strength2>"],\n'
         '  "gaps": ["<gap1>", "<gap2>"],\n'
-        '  "min_years_required": <minimum years of experience required by JD, or null if not specified>,\n'
-        '  "sponsorship_available": <true if JD says they sponsor visas, false if they say they do NOT sponsor, null if not mentioned>,\n'
-        '  "scam_flag": <true if this looks like a fake/scam posting, else false>\n'
+        '  "min_years_required": <integer or null>,\n'
+        '  "requires_phd": <true if PhD is listed as REQUIRED (not preferred), else false>,\n'
+        '  "requires_clearance": <true if security clearance is required, else false>,\n'
+        '  "sponsorship_available": <true if they sponsor, false if they explicitly do NOT, null if not mentioned>,\n'
+        '  "seniority_level": "<junior|mid|senior|staff|lead|principal|director>",\n'
+        '  "scam_flag": <true if fake/scam posting>\n'
         "}\n\n"
-        "SCORING GUIDE (be strict, do NOT default to 70-75):\n"
-        "- 85-100: Near-perfect match — meets all required skills AND experience level\n"
-        "- 70-84: Strong match — meets most required skills, experience level is close\n"
-        "- 50-69: Decent match — has relevant skills but notable gaps in experience or stack\n"
-        "- 30-49: Weak match — some transferable skills but missing key requirements\n"
-        "- 10-29: Poor match — significant skill AND experience mismatch\n"
-        "- 0-9: No match, scam, or deal-breaker (no sponsorship, clearance required)\n\n"
-        "CRITICAL RULES:\n"
-        "- EXPERIENCE: If JD requires X+ years and candidate has significantly less, "
-        "this is a MAJOR penalty. 5+ years required with <2 years experience = score under 40.\n"
-        "- SPONSORSHIP: If JD explicitly says 'no visa sponsorship', 'will not sponsor', "
-        "'must be authorized to work', score 0-10 and mention it prominently in summary.\n"
-        "- SENIORITY: Senior/Staff/Lead roles requiring 5+ years should score LOW for new grads.\n"
-        "- REQUIRED vs PREFERRED: Only penalize for REQUIRED qualifications, not preferred/nice-to-have.\n"
-        "- LOCATION: Do NOT penalize for location — candidate will relocate anywhere in US.\n"
-        "- TRANSFERABLE SKILLS: Give modest credit (not full credit) for related skills.\n"
-        "- DO NOT cluster scores around 70-75. Use the full 0-100 range based on actual fit.\n"
-        "- Flag scam_flag=true if JD is generic, company seems fake, or posting harvests data."
+        "SCORING — USE THE FULL RANGE, DO NOT CLUSTER AROUND 60-75:\n"
+        "- 90-100: Perfect fit — right seniority, right stack, right experience level\n"
+        "- 80-89: Excellent — meets nearly all requirements, minor gaps only\n"
+        "- 70-79: Good — solid skill overlap, experience level is reasonable\n"
+        "- 55-69: Decent — has some relevant skills but clear gaps\n"
+        "- 40-54: Stretch — missing significant requirements\n"
+        "- 20-39: Unlikely — major mismatches in experience or skills\n"
+        "- 0-19: No chance — deal-breakers present\n\n"
+        "HARD RULES (violating these = automatic score cap):\n"
+        "- PhD REQUIRED (not preferred): cap at 35 — candidate has MS only\n"
+        "- Security clearance required: cap at 10\n"
+        "- No sponsorship / must be authorized to work: cap at 5\n"
+        "- Senior/Staff/Lead with 5+ years required: cap at 40 — candidate has ~2 years\n"
+        "- Principal/Director level: cap at 15\n"
+        "- Requires C/C++ as PRIMARY language: cap at 30 — candidate doesn't know C++\n"
+        "- Salary >$300K usually means senior+ — factor seniority mismatch\n\n"
+        "GOOD MATCH SIGNALS (score 75+):\n"
+        "- New grad / entry-level / 0-2 years roles\n"
+        "- Java + Spring Boot roles\n"
+        "- Python + LLM/AI/RAG/agents roles\n"
+        "- React + TypeScript frontend roles\n"
+        "- Full stack (Node + React + PostgreSQL)\n"
+        "- Titles with 'Associate', 'Junior', 'New Grad', 'SDE I', 'SDE 1'\n\n"
+        "LOCATION: Do NOT penalize for location — candidate relocates anywhere in US.\n"
+        "PREFERRED vs REQUIRED: Only penalize for REQUIRED qualifications.\n"
+        "Flag scam_flag=true if JD is generic, company seems fake, or harvests data."
     )
+
+    # Smart truncation: keep first 3500 chars + last 1500 chars (where legal/requirements live)
+    if len(jd) > 5000:
+        jd_for_llm = jd[:3500] + "\n...[truncated]...\n" + jd[-1500:]
+    else:
+        jd_for_llm = jd
 
     user_prompt = (
         f"RESUME:\n{resume_text[:3000]}\n\n"
         f"JOB TITLE: {title}\n"
         f"COMPANY: {company}\n\n"
-        f"JOB DESCRIPTION:\n{jd[:3000]}"
+        f"JOB DESCRIPTION:\n{jd_for_llm}"
     )
 
     raw = llm.call(system_prompt, user_prompt)
@@ -556,20 +580,81 @@ def match_job(job_id: str):
         print(f"[match] Failed to parse LLM response: {raw[:500]}")
         raise HTTPException(502, f"Could not parse LLM response")
 
+    # --- Hard enforcement caps (LLM may still be generous) ---
+    score = result.get("match_pct", 50)
+    warnings = []
+    jd_lower = jd.lower()
+
+    # Defense companies almost always require US person / clearance
+    DEFENSE_COMPANIES = {
+        "anduril", "palantir", "lockheed martin", "raytheon", "northrop grumman",
+        "general dynamics", "bae systems", "l3harris", "leidos", "booz allen",
+        "saic", "caci", "mantech", "peraton", "shield ai", "skydio",
+    }
+    is_defense = company.lower() in DEFENSE_COMPANIES
+
+    # Text-based scan for citizenship/sponsorship requirements the LLM might have missed
+    citizenship_patterns = [
+        "u.s. citizen", "us citizen", "us person", "u.s. person",
+        "must be a united states citizen", "itar", "security clearance required",
+        "active clearance", "top secret", "ts/sci", "secret clearance",
+        "must be authorized to work", "will not sponsor", "does not sponsor",
+        "no visa sponsorship", "unable to sponsor", "cannot sponsor",
+        "authorized to work in the u", "work authorization required",
+    ]
+    has_citizenship_text = any(p in jd_lower for p in citizenship_patterns)
+
     if result.get("scam_flag"):
-        result["match_pct"] = 0
-        result["summary"] = f"[SCAM FLAG] {result.get('summary', 'Suspicious posting')}"
+        score = 0
+        warnings.append("SCAM FLAG")
 
-    if result.get("sponsorship_available") is False:
-        result["match_pct"] = min(result.get("match_pct", 0), 5)
-        result["summary"] = f"[NO SPONSORSHIP] {result.get('summary', 'Does not sponsor visas')}"
+    if result.get("requires_clearance") or (is_defense and "clearance" in jd_lower):
+        score = min(score, 10)
+        warnings.append("CLEARANCE REQUIRED")
 
-    # Prepend experience warning to summary if relevant
+    if has_citizenship_text or is_defense:
+        if result.get("sponsorship_available") is not True:
+            score = min(score, 5)
+            if is_defense:
+                warnings.append("DEFENSE CO — US PERSON REQUIRED")
+            else:
+                warnings.append("NO SPONSORSHIP")
+
+    if result.get("sponsorship_available") is False and "SPONSORSHIP" not in " ".join(warnings) and "DEFENSE" not in " ".join(warnings):
+        score = min(score, 5)
+        warnings.append("NO SPONSORSHIP")
+
+    if result.get("requires_phd"):
+        score = min(score, 35)
+        warnings.append("PhD REQUIRED")
+
+    seniority = (result.get("seniority_level") or "").lower()
+    if seniority in ("principal", "director"):
+        score = min(score, 15)
+        warnings.append(f"{seniority.upper()} LEVEL")
+    elif seniority in ("senior", "staff", "lead"):
+        min_years = result.get("min_years_required")
+        if min_years and min_years >= 5:
+            score = min(score, 40)
+            warnings.append(f"SENIOR ({min_years}+ yrs required)")
+        elif min_years and min_years >= 3:
+            score = min(score, 55)
+
+    # Experience cap even if seniority wasn't detected
     min_years = result.get("min_years_required")
-    if min_years and min_years >= 5:
-        summary = result.get("summary", "")
-        if "experience" not in summary.lower() and "years" not in summary.lower():
-            result["summary"] = f"[Requires {min_years}+ years exp] {summary}"
+    if min_years and min_years >= 7:
+        score = min(score, 30)
+        if "yrs" not in " ".join(warnings).lower():
+            warnings.append(f"Requires {min_years}+ years")
+    elif min_years and min_years >= 5:
+        score = min(score, 40)
+        if "yrs" not in " ".join(warnings).lower():
+            warnings.append(f"Requires {min_years}+ years")
+
+    result["match_pct"] = score
+    if warnings:
+        prefix = "[" + " | ".join(warnings) + "] "
+        result["summary"] = prefix + result.get("summary", "")
 
     db.update_job(
         job_id,
@@ -648,6 +733,14 @@ def linkedin_search(job_id: str):
     return {"url": url, "query": query, "company": company, "linkedin_id": linkedin_id, "verified": verified}
 
 
+@app.get("/api/linkedin-id")
+def get_linkedin_id(company: str = ""):
+    if not company.strip():
+        raise HTTPException(400, "company query param required")
+    lid, verified = _get_linkedin_id(company.strip())
+    return {"company": company.strip(), "linkedin_id": lid, "verified": verified}
+
+
 @app.patch("/api/linkedin-id")
 def update_linkedin_id(body: dict):
     company = body.get("company", "").strip()
@@ -657,6 +750,22 @@ def update_linkedin_id(body: dict):
     overrides = _load_linkedin_overrides()
     overrides[company.lower()] = lid
     _save_linkedin_overrides(overrides)
+
+    # Also update companies.json if the company exists there
+    try:
+        companies_path = Path("companies.json")
+        companies = json.loads(companies_path.read_text())
+        updated = False
+        for c in companies:
+            if c.get("name", "").lower() == company.lower():
+                c["linkedin_id"] = lid
+                updated = True
+                break
+        if updated:
+            companies_path.write_text(json.dumps(companies, indent=2))
+    except Exception as e:
+        print(f"[linkedin-id] Failed to update companies.json: {e}")
+
     return {"ok": True, "company": company, "linkedin_id": lid}
 
 
@@ -772,6 +881,16 @@ def find_emails(job_id: str):
             }
             people.append(person)
 
+        # Save to collected_emails DB
+        if people:
+            db.save_collected_emails(
+                company=company,
+                domain=domain,
+                people=people,
+                job_id=job_id,
+                job_title=job.get("title", ""),
+            )
+
         return {
             "company": company,
             "domain": domain,
@@ -783,6 +902,15 @@ def find_emails(job_id: str):
         raise
     except Exception as e:
         raise HTTPException(500, f"Hunter.io lookup failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Collected Emails dashboard
+# ---------------------------------------------------------------------------
+
+@app.get("/api/collected-emails")
+def list_collected_emails(company: str = None, limit: int = 200, offset: int = 0):
+    return db.get_collected_emails(company=company, limit=limit, offset=offset)
 
 
 # ---------------------------------------------------------------------------
