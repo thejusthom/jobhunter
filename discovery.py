@@ -259,7 +259,7 @@ def discover(queries: list[str], location: str = "United States") -> list:
                 "location": (job.get("job_city") or "") + ", " + (job.get("job_country") or ""),
                 "apply_link": link,
                 "ats": ats,
-                "description": job.get("job_description", "")[:1000],
+                "description": job.get("job_description", ""),
                 "posted_at": job.get("job_posted_at_datetime_utc", ""),
                 "discovered_at": datetime.now(timezone.utc).isoformat(),
                 "source": "jsearch",
