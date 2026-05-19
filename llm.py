@@ -213,6 +213,14 @@ HARD_SKIP_TITLE_KEYWORDS = [
 ]
 
 
+DEFENSE_COMPANIES = {
+    "anduril", "palantir", "lockheed martin", "raytheon", "northrop grumman",
+    "general dynamics", "bae systems", "l3harris", "leidos", "booz allen",
+    "saic", "caci", "mantech", "peraton", "shield ai", "skydio",
+    "general atomics", "boeing defense", "rtx", "huntington ingalls",
+}
+
+
 def hard_skip_check(title: str, description: str, company: str = "") -> tuple[bool, str | None]:
     """
     Rule-based skip check. No LLM cost.
@@ -220,6 +228,11 @@ def hard_skip_check(title: str, description: str, company: str = "") -> tuple[bo
     """
     title_lower = title.lower()
     desc_lower = description.lower()
+    company_lower = company.lower().strip()
+
+    # Defense companies require US person / clearance
+    if company_lower in DEFENSE_COMPANIES:
+        return True, f"Defense company: {company} (requires US person)"
 
     for kw in HARD_SKIP_TITLE_KEYWORDS:
         if kw in title_lower:
