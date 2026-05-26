@@ -27,6 +27,7 @@ from discovery import (
 )
 from ats_discovery import discover_from_ats, SKIP_TITLE_KEYWORDS, _job_id
 from resume_selector import get_resume_type, get_resume_text, RESUME_KEYWORDS
+from auto_apply_engine import engine as auto_apply_engine
 
 
 @asynccontextmanager
@@ -134,6 +135,143 @@ def get_job(job_id: str):
 def update_job(job_id: str, body: JobUpdate):
     db.update_job(job_id, **body.model_dump(exclude_none=True))
     return db.get_job(job_id)
+
+
+class AddJobByUrl(BaseModel):
+    url: str
+
+@app.post("/api/jobs/add-by-url")
+def add_job_by_url(body: AddJobByUrl):
+    """Fetch job details from a URL and add to the queue."""
+    import hashlib
+    from ats_discovery import _strip_html
+
+    url = body.url.strip()
+    if not url:
+        raise HTTPException(400, "URL is required")
+
+    title, company, location, description, apply_link = "", "", "", "", url
+    ats_type = ""
+
+    try:
+        # --- Workday ---
+        wd_match = re.match(
+            r"https?://(\w+)\.wd(\d+)\.myworkdayjobs\.com/(?:en-US/)?([^/]+)(/job/.+)",
+            url
+        )
+        if wd_match:
+            slug, wd_num, site, ext_path = wd_match.groups()
+            detail_url = f"https://{slug}.wd{wd_num}.myworkdayjobs.com/wday/cxs/{slug}/{site}{ext_path}"
+            r = http_requests.get(
+                detail_url,
+                headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+                timeout=10,
+            )
+            if r.status_code == 200:
+                info = r.json().get("jobPostingInfo", {})
+                title = info.get("title", "")
+                description = _strip_html(info.get("jobDescription", ""))
+                location = info.get("location", "")
+                company = slug.replace("-", " ").title()
+                apply_link = info.get("externalUrl") or url
+                ats_type = "workday"
+
+        # --- Greenhouse ---
+        gh_match = re.match(
+            r"https?://boards\.greenhouse\.io/(?:embed/)?(?:job_app\?token=|)(\w+)(?:/jobs/(\d+))?",
+            url
+        )
+        if not wd_match and gh_match:
+            board = gh_match.group(1)
+            job_num = gh_match.group(2)
+            if job_num:
+                r = http_requests.get(
+                    f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs/{job_num}",
+                    timeout=10,
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    title = data.get("title", "")
+                    description = _strip_html(data.get("content", ""))
+                    loc = data.get("location", {})
+                    location = loc.get("name", "") if isinstance(loc, dict) else str(loc)
+                    company = data.get("company", {}).get("name", board)
+                    apply_link = data.get("absolute_url", url)
+                    ats_type = "greenhouse"
+
+        # --- Lever ---
+        lever_match = re.match(r"https?://jobs\.lever\.co/([^/]+)/([a-f0-9-]+)", url)
+        if not wd_match and not gh_match and lever_match:
+            board, posting_id = lever_match.groups()
+            r = http_requests.get(f"https://api.lever.co/v0/postings/{board}/{posting_id}", timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                title = data.get("text", "")
+                description = _strip_html(data.get("descriptionPlain", "") or data.get("description", ""))
+                loc_parts = data.get("categories", {})
+                location = loc_parts.get("location", "") if isinstance(loc_parts, dict) else ""
+                company = board.replace("-", " ").title()
+                apply_link = data.get("applyUrl") or data.get("hostedUrl") or url
+                ats_type = "lever"
+
+        # --- Ashby ---
+        ashby_match = re.match(r"https?://jobs\.ashbyhq\.com/([^/]+)/([a-f0-9-]+)", url)
+        if not wd_match and not gh_match and not lever_match and ashby_match:
+            board, posting_id = ashby_match.groups()
+            r = http_requests.get(f"https://api.ashbyhq.com/posting-api/job-board/{board}", timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                for j in data.get("jobs", []):
+                    if j.get("id") == posting_id:
+                        title = j.get("title", "")
+                        description = _strip_html(j.get("descriptionHtml", "") or j.get("descriptionPlain", ""))
+                        location = j.get("location", "")
+                        company = data.get("organizationName", board)
+                        apply_link = j.get("jobUrl") or url
+                        ats_type = "ashby"
+                        break
+
+        # --- Fallback: scrape page title ---
+        if not title:
+            r = http_requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code == 200:
+                title_match = re.search(r"<title[^>]*>([^<]+)</title>", r.text, re.I)
+                if title_match:
+                    raw_title = title_match.group(1).strip()
+                    # Try to extract company from common patterns like "Title - Company"
+                    for sep in [" - ", " | ", " at ", " — ", " – "]:
+                        if sep in raw_title:
+                            parts = raw_title.split(sep)
+                            title = parts[0].strip()
+                            company = parts[1].strip() if len(parts) > 1 else ""
+                            break
+                    else:
+                        title = raw_title
+
+    except Exception as e:
+        print(f"[add-by-url] Error fetching {url}: {e}")
+
+    if not title:
+        raise HTTPException(400, "Could not extract job details from URL")
+
+    jid = hashlib.md5(url.encode()).hexdigest()[:12]
+
+    entry = {
+        "id": jid,
+        "title": title,
+        "company": company,
+        "location": location,
+        "apply_link": apply_link,
+        "ats": ats_type,
+        "score": 0,
+        "description": description,
+        "posted_at": "",
+        "discovered_at": datetime.now(timezone.utc).isoformat(),
+        "source": "manual_url",
+        "query": "",
+    }
+    db.upsert_jobs([entry])
+    return db.get_job(jid)
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +394,7 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
     date_posted = min(date_posted_map.items(), key=lambda x: abs(x[0] - freshness_hours))[1]
 
     try:
-        if not skip_jsearch:
+        if not skip_jsearch and JSEARCH_KEY:
             from config import SEARCH_KEYWORDS
             qs = queries or SEARCH_KEYWORDS
             blacklist = load_json(BLACKLIST_PATH)
@@ -372,15 +510,19 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
             from ats_discovery import (
                 fetch_greenhouse, fetch_lever, fetch_ashby,
                 fetch_amazon, fetch_workday, fetch_pinpoint,
+                fetch_linkedin,
             )
             import time
             ats_discovery.FRESHNESS_DAYS = max(1, freshness_hours / 24)
 
             for company in companies:
                 name = company.get("name", "")
-                ats = company.get("ats", "").lower()
+                ats = (company.get("ats") or "").lower()
                 slug = company.get("slug", "")
-                if not (name and ats and slug):
+                linkedin_id = company.get("linkedin_id", "")
+                if not name or not ats:
+                    continue
+                if ats not in ("linkedin", "amazon", "apple") and not slug:
                     continue
                 if db.is_company_blocked(name):
                     continue
@@ -393,6 +535,10 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
                     raw_jobs = fetch_ashby(slug, name)
                 elif ats == "amazon":
                     raw_jobs = fetch_amazon(name)
+                elif ats == "linkedin":
+                    if not linkedin_id:
+                        continue
+                    raw_jobs = fetch_linkedin(linkedin_id, name)
                 elif ats == "workday":
                     raw_jobs = fetch_workday(slug, name, company.get("wd_num", 5), company.get("site", ""))
                 elif ats == "pinpoint":
@@ -508,10 +654,10 @@ def match_job(job_id: str):
     system_prompt = (
         "You are a brutally honest technical recruiter evaluating candidate-job fit.\n\n"
         "CANDIDATE PROFILE (memorize this):\n"
-        "- MS in Software Engineering (Northeastern, graduating Dec 2025)\n"
+        "- MS in Software Engineering Systems (Northeastern, graduated Dec 2025)\n"
         "- 3+ years professional experience at IBM (Associate + Application Developer)\n"
-        "- Current: AI Software Engineer at Humanitarians AI (nonprofit)\n"
-        "- NO PhD. NO security clearance. NO 5+ years experience.\n"
+        "- Currently working as AI Software Engineer at Humanitarians AI (nonprofit)\n"
+        "- NO PhD. NO security clearance. ~3.5 years professional experience total.\n"
         "- Strong: Java/Spring Boot, Python, React/TypeScript, Node.js, LLM/RAG/agents\n"
         "- Weak: No C/C++, no robotics, no embedded systems, no ML research publications\n"
         "- Needs visa sponsorship (international student on OPT)\n\n"
@@ -526,8 +672,9 @@ def match_job(job_id: str):
         '  "min_years_required": <integer or null>,\n'
         '  "requires_phd": <true if PhD is listed as REQUIRED (not preferred), else false>,\n'
         '  "requires_clearance": <true if security clearance is required, else false>,\n'
-        '  "sponsorship_available": <true if they sponsor, false if they explicitly do NOT, null if not mentioned>,\n'
+        '  "sponsorship_available": <true if they explicitly say they sponsor visas, false ONLY if the JD text explicitly says they do NOT sponsor (e.g. "no visa sponsorship", "will not sponsor"). null if not mentioned. IMPORTANT: E-Verify statements are NOT "no sponsorship" — E-Verify is standard employment verification that all employers use, including those who sponsor visas. Do NOT guess based on company reputation or E-Verify.>,\n'
         '  "seniority_level": "<junior|mid|senior|staff|lead|principal|director>",\n'
+        '  "is_ml_specialist_role": <true if the PRIMARY job function is ML model training/research/data science rather than software engineering>,\n'
         '  "scam_flag": <true if fake/scam posting>\n'
         "}\n\n"
         "SCORING — USE THE FULL RANGE, DO NOT CLUSTER AROUND 60-75:\n"
@@ -541,28 +688,33 @@ def match_job(job_id: str):
         "HARD RULES (violating these = automatic score cap):\n"
         "- PhD REQUIRED (not preferred): cap at 35 — candidate has MS only\n"
         "- Security clearance required: cap at 10\n"
-        "- No sponsorship / must be authorized to work: cap at 5\n"
-        "- Senior/Staff/Lead with 5+ years required: cap at 40 — candidate has ~2 years\n"
+        "- No sponsorship / must be authorized to work: cap at 5 — ONLY if the JD explicitly states 'no visa sponsorship', 'will not sponsor', etc. E-Verify is NOT a sponsorship restriction. Do NOT assume based on company name, salary, or E-Verify.\n"
+        "- Senior/Staff/Lead with 5+ years required: cap at 40 — candidate has ~3 years\n"
         "- Principal/Director level: cap at 15\n"
         "- Requires C/C++ as PRIMARY language: cap at 30 — candidate doesn't know C++\n"
-        "- Salary >$300K usually means senior+ — factor seniority mismatch\n\n"
+        "- Salary >$300K usually means senior+ — factor seniority mismatch\n"
+        "- ML Engineer/Scientist roles requiring model training, ML research, or deep statistics: cap at 45\n"
+        "  (candidate builds APPS with LLMs/AI, does NOT train models or do ML research)\n\n"
         "GOOD MATCH SIGNALS (score 75+):\n"
         "- New grad / entry-level / 0-2 years roles\n"
-        "- Java + Spring Boot roles\n"
-        "- Python + LLM/AI/RAG/agents roles\n"
+        "- Java + Spring Boot backend roles\n"
+        "- Python backend / infrastructure / platform roles\n"
+        "- Python + LLM/AI/RAG/agents APPLICATION roles (building with AI, NOT training models)\n"
         "- React + TypeScript frontend roles\n"
         "- Full stack (Node + React + PostgreSQL)\n"
-        "- Titles with 'Associate', 'Junior', 'New Grad', 'SDE I', 'SDE 1'\n\n"
+        "- Backend/platform engineer roles (APIs, distributed systems, cloud infra)\n"
+        "- Titles with 'Associate', 'Junior', 'New Grad', 'SDE I', 'SDE 1', 'Engineer II'\n\n"
+        "POOR MATCH SIGNALS (score lower):\n"
+        "- ML Engineer / Data Scientist / Research Scientist requiring model training, MLOps,\n"
+        "  ML pipelines, statistical modeling, recommendation systems, anomaly detection algorithms\n"
+        "- Roles where PRIMARY skill is ML/data science, not software engineering\n"
+        "- DevOps/SRE/Infrastructure-only roles with no application development\n\n"
         "LOCATION: Do NOT penalize for location — candidate relocates anywhere in US.\n"
         "PREFERRED vs REQUIRED: Only penalize for REQUIRED qualifications.\n"
         "Flag scam_flag=true if JD is generic, company seems fake, or harvests data."
     )
 
-    # Smart truncation: keep first 3500 chars + last 1500 chars (where legal/requirements live)
-    if len(jd) > 5000:
-        jd_for_llm = jd[:3500] + "\n...[truncated]...\n" + jd[-1500:]
-    else:
-        jd_for_llm = jd
+    jd_for_llm = jd
 
     user_prompt = (
         f"RESUME:\n{resume_text[:3000]}\n\n"
@@ -596,11 +748,15 @@ def match_job(job_id: str):
     # Text-based scan for citizenship/sponsorship requirements the LLM might have missed
     citizenship_patterns = [
         "u.s. citizen", "us citizen", "us person", "u.s. person",
-        "must be a united states citizen", "itar", "security clearance required",
+        "must be a united states citizen", " itar ", "itar compliance", "itar regulated",
+        "security clearance required",
         "active clearance", "top secret", "ts/sci", "secret clearance",
         "must be authorized to work", "will not sponsor", "does not sponsor",
         "no visa sponsorship", "unable to sponsor", "cannot sponsor",
-        "authorized to work in the u", "work authorization required",
+        "must be legally authorized to work in the u",
+        "work authorization is required", "work authorization required",
+        "not eligible for visa sponsorship", "sponsorship is not available",
+        "must have current work authorization",
     ]
     has_citizenship_text = any(p in jd_lower for p in citizenship_patterns)
 
@@ -612,15 +768,12 @@ def match_job(job_id: str):
         score = min(score, 10)
         warnings.append("CLEARANCE REQUIRED")
 
-    if has_citizenship_text or is_defense:
+    if is_defense:
         if result.get("sponsorship_available") is not True:
             score = min(score, 5)
-            if is_defense:
-                warnings.append("DEFENSE CO — US PERSON REQUIRED")
-            else:
-                warnings.append("NO SPONSORSHIP")
-
-    if result.get("sponsorship_available") is False and "SPONSORSHIP" not in " ".join(warnings) and "DEFENSE" not in " ".join(warnings):
+            warnings.append("DEFENSE CO — US PERSON REQUIRED")
+    elif has_citizenship_text:
+        # Only flag if the actual JD text contains sponsorship/citizenship language
         score = min(score, 5)
         warnings.append("NO SPONSORSHIP")
 
@@ -650,6 +803,21 @@ def match_job(job_id: str):
         score = min(score, 40)
         if "yrs" not in " ".join(warnings).lower():
             warnings.append(f"Requires {min_years}+ years")
+    elif min_years and min_years >= 4:
+        score = min(score, 60)
+
+    # ML specialist role cap — candidate builds apps WITH AI, doesn't train models
+    if result.get("is_ml_specialist_role"):
+        ml_keywords = ["model training", "mlops", "ml pipeline", "feature store",
+                        "recommendation system", "anomaly detection", "ml lifecycle",
+                        "model serving", "sagemaker", "mlflow", "kubeflow"]
+        ml_hits = sum(1 for kw in ml_keywords if kw in jd_lower)
+        if ml_hits >= 3:
+            score = min(score, 40)
+            warnings.append("ML SPECIALIST ROLE")
+        elif ml_hits >= 1:
+            score = min(score, 55)
+            warnings.append("ML-heavy role")
 
     result["match_pct"] = score
     if warnings:
@@ -668,6 +836,120 @@ def match_job(job_id: str):
     result["resume_scores"] = scores
     result["matched_keywords"] = {k: v[:5] for k, v in matched_kw.items()}
     return result
+
+
+# ---------------------------------------------------------------------------
+# Recruiter outreach message generator
+# ---------------------------------------------------------------------------
+
+class OutreachRequest(BaseModel):
+    recruiter_name: str | None = None
+    linkedin_post: str | None = None
+
+@app.post("/api/jobs/{job_id}/outreach")
+def generate_outreach(job_id: str, req: OutreachRequest = None):
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    # Return cached outreach if available and no custom context provided
+    has_custom = req and (req.recruiter_name or req.linkedin_post)
+    if not has_custom and job.get("outreach_full") and job.get("outreach_short"):
+        return {
+            "full": job["outreach_full"],
+            "short": job["outreach_short"],
+            "job_title": job.get("title", ""),
+            "company": job.get("company", ""),
+            "cached": True,
+        }
+
+    if not llm.is_available():
+        raise HTTPException(503, "No LLM configured")
+
+    jd = job.get("description", "")
+    title = job.get("title", "")
+    company = job.get("company", "")
+    team = job.get("team", "")
+    match_summary = job.get("match_summary", "")
+
+    if not jd:
+        raise HTTPException(400, "No job description available")
+
+    recruiter_name = (req.recruiter_name or "").strip() if req else ""
+    linkedin_post = (req.linkedin_post or "").strip() if req else ""
+
+    system_prompt = (
+        "You generate LinkedIn recruiter outreach messages for a job applicant.\n\n"
+        "CANDIDATE PROFILE:\n"
+        "- MS in Software Engineering Systems (Northeastern, graduated Dec 2025)\n"
+        "- 3+ years professional experience at IBM (Associate + Application Developer)\n"
+        "- Currently working as AI Software Engineer at Humanitarians AI (nonprofit)\n"
+        "- Strong: Java/Spring Boot, Python, React/TypeScript, Node.js, LLM/RAG/agents\n"
+        "- Built full stack apps, AI pipelines, distributed systems\n\n"
+        "STRICT RULES:\n"
+        "1. Generate TWO versions: a full message (150-250 words) and a short version (STRICTLY under 260 characters, leave room for salutations)\n"
+        "2. If no recruiter name provided, open with: Just wanted to put a face to my resume\n"
+        "3. Always mention that you applied\n"
+        "4. Include a human touch and offer to share resume\n"
+        "5. Reference something SPECIFIC from the JD or LinkedIn post\n"
+        "6. Be VERY optimistic about the match\n"
+        "7. NEVER mention visa, OPT, sponsorship, work authorization, or immigration status\n"
+        "8. BANNED WORDS (never use): resonated, resonate, stood out, thrills, thrilled, excited to, "
+        "passionate about, delighted, I wanted to reach out, stood out to me\n"
+        "9. NO hyphens, dashes, em dashes, or en dashes ANYWHERE. This is the highest priority rule.\n"
+        "10. Must sound like a real human wrote it, not AI. Be casual and natural.\n"
+        "11. No AI sounding words or corporate buzzwords\n"
+        "12. If a LinkedIn post is provided, acknowledge something specific from it and mirror the poster's tone\n\n"
+        "Respond with ONLY a valid JSON object (no markdown fences):\n"
+        "{\n"
+        '  "full": "<the full message, 150-250 words>",\n'
+        '  "short": "<the short version, MUST be under 260 characters>"\n'
+        "}"
+    )
+
+    # Build context for the LLM
+    jd_snippet = jd[:2000] if len(jd) > 2000 else jd
+    user_parts = [
+        f"JOB TITLE: {title}",
+        f"COMPANY: {company}",
+    ]
+    if team:
+        user_parts.append(f"TEAM: {team}")
+    if match_summary:
+        user_parts.append(f"MATCH ANALYSIS: {match_summary}")
+    if recruiter_name:
+        user_parts.append(f"RECRUITER NAME: {recruiter_name}")
+    if linkedin_post:
+        user_parts.append(f"LINKEDIN POST BY RECRUITER:\n{linkedin_post[:1000]}")
+    user_parts.append(f"JOB DESCRIPTION:\n{jd_snippet}")
+
+    user_prompt = "\n\n".join(user_parts)
+
+    raw = llm.call(system_prompt, user_prompt)
+    if not raw:
+        raise HTTPException(502, "LLM call returned empty response")
+
+    result = llm.parse_json(raw)
+    if not result or "full" not in result or "short" not in result:
+        raise HTTPException(502, "Could not parse outreach messages")
+
+    # Enforce no dashes (highest priority rule)
+    for key in ("full", "short"):
+        result[key] = result[key].replace("—", " ").replace("–", " ").replace("-", " ")
+
+    # Log if short version exceeds target (LLM should handle length)
+    if len(result["short"]) > 260:
+        print(f"[outreach] Short version is {len(result['short'])} chars (target: 260)")
+
+    # Persist to DB
+    db.update_job(job_id, outreach_full=result["full"], outreach_short=result["short"])
+
+    return {
+        "full": result["full"],
+        "short": result["short"],
+        "job_title": title,
+        "company": company,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -980,6 +1262,49 @@ def fix_workday_urls():
     companies = json.loads(Path("companies.json").read_text())
     fixed = db.fix_workday_urls(companies)
     return {"fixed": fixed}
+
+
+# ---------------------------------------------------------------------------
+# Auto-Apply Engine
+# ---------------------------------------------------------------------------
+
+class AutoApplyStart(BaseModel):
+    min_score: int = 60
+    limit: int = 50
+    ext_wait: int = 8
+    delay: int = 3
+
+class AutoApplyAction(BaseModel):
+    action: str   # applied | applied_recruiter | skip | stop
+
+@app.post("/api/auto-apply/start")
+def auto_apply_start(body: AutoApplyStart):
+    ok = auto_apply_engine.start(
+        min_score=body.min_score,
+        limit=body.limit,
+        ext_wait=body.ext_wait,
+        delay=body.delay,
+    )
+    if not ok:
+        status = auto_apply_engine.get_status()
+        if status["status"] == "running":
+            raise HTTPException(409, "Already running")
+        raise HTTPException(400, status.get("error", "Failed to start"))
+    return {"ok": True}
+
+@app.get("/api/auto-apply/status")
+def auto_apply_status():
+    return auto_apply_engine.get_status()
+
+@app.post("/api/auto-apply/stop")
+def auto_apply_stop():
+    auto_apply_engine.stop()
+    return {"ok": True}
+
+@app.post("/api/auto-apply/action")
+def auto_apply_action(body: AutoApplyAction):
+    auto_apply_engine.send_action(body.action)
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

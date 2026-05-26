@@ -1,5 +1,26 @@
 [
   {
+    "name": "Autodesk",
+    "ats": "workday",
+    "slug": "autodesk",
+    "wd_num": 1,
+    "site": "Ext"
+  },
+  {
+    "name": "AT&T",
+    "ats": "workday",
+    "slug": "att",
+    "wd_num": 1,
+    "site": "ATTGeneral"
+  },
+  {
+    "name": "Verizon",
+    "ats": "workday",
+    "slug": "verizon",
+    "wd_num": 12,
+    "site": "verizon-careers"
+  },
+  {
     "name": "Stripe",
     "ats": "greenhouse",
     "slug": "stripe",
@@ -189,9 +210,9 @@
   },
   {
     "name": "Opendoor",
-    "ats": "greenhouse",
-    "slug": "opendoor",
-    "linkedin_id": "9398436"
+    "ats": null,
+    "linkedin_id": "9398436",
+    "needs_ats": true
   },
   {
     "name": "Cockroach Labs",
@@ -208,7 +229,8 @@
   {
     "name": "Navan",
     "ats": "greenhouse",
-    "slug": "tripactions"
+    "slug": "tripactions",
+    "linkedin_id": "79902774"
   },
   {
     "name": "DoorDash",
@@ -239,7 +261,8 @@
   {
     "name": "Nuro",
     "ats": "greenhouse",
-    "slug": "nuro"
+    "slug": "nuro",
+    "linkedin_id": "12957486"
   },
   {
     "name": "Flexport",
@@ -319,7 +342,8 @@
   {
     "name": "Hightouch",
     "ats": "greenhouse",
-    "slug": "hightouch"
+    "slug": "hightouch",
+    "linkedin_id": "42344868"
   },
   {
     "name": "Coupang",
@@ -379,7 +403,8 @@
   {
     "name": "Abnormal Security",
     "ats": "greenhouse",
-    "slug": "abnormalsecurity"
+    "slug": "abnormalsecurity",
+    "linkedin_id": "18586257"
   },
   {
     "name": "Epic Games",
@@ -558,7 +583,7 @@
   },
   {
     "name": "Mistral",
-    "ats": "ashby",
+    "ats": "lever",
     "slug": "mistral",
     "linkedin_id": "94273421"
   },
@@ -638,7 +663,8 @@
   {
     "name": "OpenAI",
     "ats": "ashby",
-    "slug": "openai"
+    "slug": "openai",
+    "linkedin_id": "11130470"
   },
   {
     "name": "Snowflake",
@@ -919,12 +945,13 @@
     "name": "Andiamo",
     "ats": null,
     "slug": "",
-    "linkedin_id": "32309"
+    "linkedin_id": "32309",
+    "needs_ats": true
   },
   {
     "name": "Scribd, Inc.",
-    "ats": null,
-    "slug": "",
+    "ats": "ashby",
+    "slug": "ScribdInc",
     "linkedin_id": "129665"
   },
   {
@@ -938,7 +965,8 @@
     "name": "Goldman Sachs",
     "ats": null,
     "slug": "",
-    "linkedin_id": "1382"
+    "linkedin_id": "1382",
+    "needs_ats": true
   },
   {
     "name": "Morgan Stanley",
@@ -950,15 +978,15 @@
   },
   {
     "name": "Citigroup",
-    "ats": null,
+    "ats": "linkedin",
     "slug": "",
     "linkedin_id": "11448"
   },
   {
     "name": "Bank of America",
-    "ats": null,
+    "ats": "linkedin",
     "slug": "",
-    "linkedin_id": "1088"
+    "linkedin_id": "1259"
   },
   {
     "name": "Wells Fargo",
@@ -978,9 +1006,9 @@
   },
   {
     "name": "American Express",
-    "ats": null,
+    "ats": "linkedin",
     "slug": "",
-    "linkedin_id": "1277"
+    "linkedin_id": "1088"
   },
   {
     "name": "Visa",
@@ -1008,7 +1036,8 @@
     "name": "UBS",
     "ats": null,
     "slug": "",
-    "linkedin_id": "2672"
+    "linkedin_id": "2672",
+    "needs_ats": true
   },
   {
     "name": "BNY Mellon",
@@ -1019,7 +1048,7 @@
   },
   {
     "name": "Deloitte",
-    "ats": null,
+    "ats": "linkedin",
     "slug": "",
     "linkedin_id": "1038"
   },
@@ -1033,39 +1062,40 @@
   },
   {
     "name": "IBM",
-    "ats": null,
+    "ats": "linkedin",
     "slug": "",
     "linkedin_id": "1009"
   },
   {
     "name": "Cognizant",
-    "ats": null,
+    "ats": "linkedin",
     "slug": "",
-    "linkedin_id": "5765"
+    "linkedin_id": "2786"
   },
   {
     "name": "Wipro",
-    "ats": null,
+    "ats": "linkedin",
     "slug": "",
     "linkedin_id": "1318"
   },
   {
     "name": "Infosys",
-    "ats": null,
+    "ats": "linkedin",
     "slug": "",
     "linkedin_id": "1283"
   },
   {
     "name": "Capgemini",
-    "ats": null,
+    "ats": "linkedin",
     "slug": "",
-    "linkedin_id": "1128"
+    "linkedin_id": "157240"
   },
   {
     "name": "Intuit",
     "ats": null,
     "slug": "",
-    "linkedin_id": "1666"
+    "linkedin_id": "1666",
+    "needs_ats": true
   },
   {
     "name": "Netflix",
@@ -1079,7 +1109,8 @@
     "name": "Coinbase",
     "ats": null,
     "slug": "",
-    "linkedin_id": "2148860"
+    "linkedin_id": "2148860",
+    "needs_ats": true
   },
   {
     "name": "Snap",
@@ -1107,19 +1138,21 @@
     "name": "Grammarly",
     "ats": null,
     "slug": "",
-    "linkedin_id": "2485689"
+    "linkedin_id": "2485689",
+    "needs_ats": true
   },
   {
     "name": "HashiCorp",
     "ats": null,
     "slug": "",
-    "linkedin_id": "3205190"
+    "linkedin_id": "3205190",
+    "needs_ats": true
   },
   {
     "name": "Palo Alto Networks",
-    "ats": null,
+    "ats": "linkedin",
     "slug": "",
-    "linkedin_id": "31200"
+    "linkedin_id": "30086"
   },
   {
     "name": "CrowdStrike",
@@ -1131,33 +1164,36 @@
   },
   {
     "name": "SentinelOne",
-    "ats": null,
-    "slug": "",
+    "ats": "greenhouse",
+    "slug": "sentinellabs",
     "linkedin_id": "2886117"
   },
   {
     "name": "Atlassian",
-    "ats": null,
+    "ats": "linkedin",
     "slug": "",
-    "linkedin_id": "42572"
+    "linkedin_id": "20708"
   },
   {
     "name": "Two Sigma",
     "ats": null,
     "slug": "",
-    "linkedin_id": "242295"
+    "linkedin_id": "242295",
+    "needs_ats": true
   },
   {
     "name": "Citadel",
     "ats": null,
     "slug": "",
-    "linkedin_id": "5765873"
+    "linkedin_id": "5765873",
+    "needs_ats": true
   },
   {
     "name": "D.E. Shaw",
     "ats": null,
     "slug": "",
-    "linkedin_id": "3127"
+    "linkedin_id": "3127",
+    "needs_ats": true
   },
   {
     "name": "Jane Street",
@@ -1235,7 +1271,8 @@
   {
     "name": "Glean",
     "ats": "greenhouse",
-    "slug": "gleanwork"
+    "slug": "gleanwork",
+    "linkedin_id": "74882602"
   },
   {
     "name": "Harness",
@@ -1302,7 +1339,7 @@
   },
   {
     "name": "Tesla",
-    "ats": null,
+    "ats": "linkedin",
     "slug": "",
     "linkedin_id": "15564"
   },
@@ -1316,19 +1353,20 @@
     "name": "TikTok",
     "ats": null,
     "slug": "",
-    "linkedin_id": "36600900"
+    "linkedin_id": "36600900",
+    "needs_ats": true
   },
   {
     "name": "Qualcomm",
-    "ats": null,
+    "ats": "linkedin",
     "slug": "",
-    "linkedin_id": "2330"
+    "linkedin_id": "1252"
   },
   {
     "name": "AMD",
-    "ats": null,
+    "ats": "linkedin",
     "slug": "",
-    "linkedin_id": "3260"
+    "linkedin_id": "1158"
   },
   {
     "name": "Bloomberg",
@@ -1342,7 +1380,7 @@
     "name": "Expedia",
     "ats": "workday",
     "slug": "expedia",
-    "linkedin_id": "3064",
+    "linkedin_id": "2751",
     "wd_num": 108,
     "site": "search"
   },
@@ -1350,13 +1388,15 @@
     "name": "eBay",
     "ats": null,
     "slug": "",
-    "linkedin_id": "1191"
+    "linkedin_id": "1191",
+    "needs_ats": true
   },
   {
     "name": "Rivian",
     "ats": null,
     "slug": "",
-    "linkedin_id": "9382619"
+    "linkedin_id": "9382619",
+    "needs_ats": true
   },
   {
     "name": "Micron",
@@ -1370,7 +1410,7 @@
     "name": "BlackRock",
     "ats": "workday",
     "slug": "blackrock",
-    "linkedin_id": "3353",
+    "linkedin_id": "4764",
     "wd_num": 1,
     "site": "BlackRock_Professional"
   },
@@ -1392,7 +1432,8 @@
     "name": "Nutanix",
     "ats": null,
     "slug": "",
-    "linkedin_id": "2332655"
+    "linkedin_id": "2332655",
+    "needs_ats": true
   },
   {
     "name": "Fortinet",
@@ -1425,33 +1466,35 @@
   },
   {
     "name": "monday.com",
-    "ats": null,
-    "slug": "",
+    "ats": "ashby",
+    "slug": "monday.com",
     "linkedin_id": "10627738"
   },
   {
     "name": "Snyk",
     "ats": null,
     "slug": "",
-    "linkedin_id": "15077872"
+    "linkedin_id": "15077872",
+    "needs_ats": true
   },
   {
     "name": "Ironclad",
-    "ats": null,
-    "slug": "",
+    "ats": "ashby",
+    "slug": "ironcladhq",
     "linkedin_id": "18079918"
   },
   {
     "name": "Tipalti",
-    "ats": null,
-    "slug": "",
+    "ats": "greenhouse",
+    "slug": "tipaltisolutions",
     "linkedin_id": "3757803"
   },
   {
     "name": "Procore",
     "ats": null,
     "slug": "",
-    "linkedin_id": "2684541"
+    "linkedin_id": "2684541",
+    "needs_ats": true
   },
   {
     "name": "Etsy",
@@ -1469,8 +1512,8 @@
   },
   {
     "name": "Noom",
-    "ats": null,
-    "slug": "",
+    "ats": "greenhouse",
+    "slug": "noomgrowth",
     "linkedin_id": "2832105"
   },
   {
@@ -1483,127 +1526,144 @@
     "name": "Shopify",
     "ats": null,
     "slug": "",
-    "linkedin_id": "1110277"
+    "linkedin_id": "1110277",
+    "needs_ats": true
   },
   {
     "name": "ThoughtSpot",
-    "ats": null,
-    "slug": "",
-    "linkedin_id": "3207804"
+    "ats": "workday",
+    "slug": "thoughtspot",
+    "linkedin_id": "3207804",
+    "wd_num": 5,
+    "site": "careers"
   },
   {
     "name": "Dynatrace",
     "ats": null,
     "slug": "",
-    "linkedin_id": "100998"
+    "linkedin_id": "100998",
+    "needs_ats": true
   },
   {
     "name": "DigitalOcean",
-    "ats": null,
-    "slug": "",
+    "ats": "greenhouse",
+    "slug": "digitalocean98",
     "linkedin_id": "3076372"
   },
   {
     "name": "Niantic",
     "ats": null,
     "slug": "",
-    "linkedin_id": "6379101"
+    "linkedin_id": "6379101",
+    "needs_ats": true
   },
   {
     "name": "GoodRx",
-    "ats": null,
-    "slug": "",
-    "linkedin_id": "3007569"
+    "ats": "workday",
+    "slug": "goodrx",
+    "linkedin_id": "3007569",
+    "wd_num": 1,
+    "site": "careers"
   },
   {
     "name": "Electronic Arts",
     "ats": null,
     "slug": "",
-    "linkedin_id": "1699"
+    "linkedin_id": "1699",
+    "needs_ats": true
   },
   {
     "name": "Redfin",
     "ats": null,
     "slug": "",
-    "linkedin_id": "291189"
+    "linkedin_id": "291189",
+    "needs_ats": true
   },
   {
     "name": "Klarna",
     "ats": null,
     "slug": "",
-    "linkedin_id": "503641"
+    "linkedin_id": "503641",
+    "needs_ats": true
   },
   {
     "name": "Rippling",
     "ats": null,
     "slug": "",
-    "linkedin_id": "11161932"
+    "linkedin_id": "11161932",
+    "needs_ats": true
   },
   {
     "name": "Retool",
     "ats": null,
     "slug": "",
-    "linkedin_id": "14800503"
+    "linkedin_id": "14800503",
+    "needs_ats": true
   },
   {
     "name": "Hinge Health",
-    "ats": null,
-    "slug": "",
+    "ats": "ashby",
+    "slug": "hinge-health",
     "linkedin_id": "10524601"
   },
   {
     "name": "Matterport",
     "ats": null,
     "slug": "",
-    "linkedin_id": "5074203"
+    "linkedin_id": "5074203",
+    "needs_ats": true
   },
   {
     "name": "Hims",
-    "ats": null,
-    "slug": "",
+    "ats": "ashby",
+    "slug": "hims-and-hers",
     "linkedin_id": "18126894"
   },
   {
     "name": "Tempus",
-    "ats": null,
-    "slug": "",
-    "linkedin_id": "10314712"
+    "ats": "workday",
+    "slug": "tempus",
+    "linkedin_id": "10314712",
+    "wd_num": 5,
+    "site": "tempus_Careers"
   },
   {
     "name": "Weights & Biases",
-    "ats": null,
-    "slug": "",
+    "ats": "greenhouse",
+    "slug": "weights_and_biases",
     "linkedin_id": "18524849"
   },
   {
     "name": "Hugging Face",
     "ats": null,
     "slug": "",
-    "linkedin_id": "18505021"
+    "linkedin_id": "18505021",
+    "needs_ats": true
   },
   {
     "name": "Seismic",
     "ats": null,
     "slug": "",
-    "linkedin_id": "2701834"
+    "linkedin_id": "2701834",
+    "needs_ats": true
   },
   {
     "name": "Writer",
-    "ats": null,
-    "slug": "",
+    "ats": "ashby",
+    "slug": "writer",
     "linkedin_id": "40749722"
   },
   {
     "name": "Charles Schwab",
-    "ats": null,
-    "slug": "",
+    "ats": "greenhouse",
+    "slug": "charles",
     "linkedin_id": "2672"
   },
   {
     "name": "ADP",
-    "ats": null,
+    "ats": "linkedin",
     "slug": "",
-    "linkedin_id": "1427"
+    "linkedin_id": "1400"
   },
   {
     "name": "Hewlett Packard Enterprise",
@@ -1623,8 +1683,8 @@
   },
   {
     "name": "LinkedIn",
-    "ats": null,
-    "slug": "",
+    "ats": "greenhouse",
+    "slug": "LinkedIn",
     "linkedin_id": "1337"
   },
   {
@@ -1634,5 +1694,35 @@
     "linkedin_id": "2646",
     "wd_num": 5,
     "site": "WalmartExternal"
+  },
+  {
+    "name": "Meta",
+    "ats": "linkedin",
+    "slug": "",
+    "linkedin_id": "10667"
+  },
+  {
+    "name": "Google",
+    "ats": "linkedin",
+    "slug": "",
+    "linkedin_id": "1441"
+  },
+  {
+    "name": "Microsoft",
+    "ats": "linkedin",
+    "slug": "",
+    "linkedin_id": "1035"
+  },
+  {
+    "name": "Palantir",
+    "ats": "lever",
+    "slug": "palantir",
+    "linkedin_id": "20708"
+  },
+  {
+    "name": "Apple",
+    "ats": "apple",
+    "slug": "",
+    "linkedin_id": "162479"
   }
 ]

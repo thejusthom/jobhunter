@@ -24,6 +24,7 @@ export const api = {
   linkedinSearch: (id) => request(`/jobs/${id}/linkedin-search`),
   linkedinLeaders: (id, role = 'hiring') => request(`/jobs/${id}/linkedin-leaders?role=${role}`),
   findEmails: (id) => request(`/jobs/${id}/find-emails`),
+  generateOutreach: (id, data = {}) => request(`/jobs/${id}/outreach`, { method: 'POST', body: JSON.stringify(data) }),
   getLinkedInId: (company) => request(`/linkedin-id?company=${encodeURIComponent(company)}`),
   updateLinkedInId: (company, linkedin_id) => request('/linkedin-id', { method: 'PATCH', body: JSON.stringify({ company, linkedin_id }) }),
 
@@ -59,5 +60,12 @@ export const api = {
   blockCompany: (company, reason = 'no sponsorship') => request('/blocked-companies', { method: 'POST', body: JSON.stringify({ company, reason }) }),
   getBlockedCompanies: () => request('/blocked-companies'),
   unblockCompany: (company) => request(`/blocked-companies/${encodeURIComponent(company)}`, { method: 'DELETE' }),
+  addJobByUrl: (url) => request('/jobs/add-by-url', { method: 'POST', body: JSON.stringify({ url }) }),
   fixWorkdayUrls: () => request('/jobs/fix-workday-urls', { method: 'POST' }),
+
+  // Auto-Apply Engine
+  autoApplyStart: (data = {}) => request('/auto-apply/start', { method: 'POST', body: JSON.stringify(data) }),
+  autoApplyStatus: () => request('/auto-apply/status'),
+  autoApplyStop: () => request('/auto-apply/stop', { method: 'POST' }),
+  autoApplyAction: (action) => request('/auto-apply/action', { method: 'POST', body: JSON.stringify({ action }) }),
 };

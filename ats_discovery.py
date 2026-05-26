@@ -1,6 +1,7 @@
 """
 ATS Discovery Module
-Queries Greenhouse, Lever, Ashby, Amazon, Workday, Pinpoint, SmartRecruiters, and Oracle Cloud HCM public APIs.
+Queries Greenhouse, Lever, Ashby, Amazon, Apple, Workday, Pinpoint,
+SmartRecruiters, Oracle Cloud HCM, and LinkedIn public APIs.
 No API key required — these are open public endpoints.
 Filters to US-based jobs only.
 """
@@ -360,6 +361,142 @@ def fetch_amazon(company_name: str = "Amazon") -> list:
 
 
 # ---------------------------------------------------------------------------
+# Apple — SSR hydration data from jobs.apple.com
+# ---------------------------------------------------------------------------
+
+def _parse_apple_ssr(html_text: str) -> dict | None:
+    """Extract __staticRouterHydrationData from Apple jobs HTML."""
+    idx = html_text.find("__staticRouterHydrationData")
+    if idx < 0:
+        return None
+    parse_idx = html_text.find('JSON.parse("', idx)
+    if parse_idx < 0:
+        return None
+    inner_start = parse_idx + len('JSON.parse("')
+    pos = inner_start
+    while pos < len(html_text):
+        next_quote = html_text.find('"', pos)
+        if next_quote == -1:
+            return None
+        if html_text[next_quote - 1] != '\\':
+            inner_end = next_quote
+            break
+        pos = next_quote + 1
+    else:
+        return None
+    raw_json = html_text[inner_start:inner_end]
+    unescaped = raw_json.replace('\\"', '"').replace('\\\\', '\\')
+    return json.loads(unescaped)
+
+
+def fetch_apple(company_name: str = "Apple") -> list:
+    """Fetch software engineering jobs from jobs.apple.com via SSR data."""
+    base = "https://jobs.apple.com/en-us/search"
+    params = {
+        "search": "software engineer",
+        "location": "united-states-USA",
+        # Software teams
+        "team": (
+            "apps-and-frameworks-SFTWR-AF "
+            "core-operating-systems-SFTWR-COS "
+            "machine-learning-and-ai-SFTWR-MLAI "
+            "cloud-and-infrastructure-SFTWR-CLD "
+            "devops-and-site-reliability-SFTWR-DSR "
+            "information-systems-and-technology-SFTWR-ISTECH "
+            "security-and-privacy-SFTWR-SP"
+        ),
+    }
+    results = []
+    seen_ids = set()
+
+    for page_num in range(1, 4):  # up to 3 pages (60 jobs)
+        try:
+            p = {**params, "page": str(page_num)} if page_num > 1 else params
+            resp = requests.get(base, params=p, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+            if resp.status_code != 200:
+                print(f"[ats] Apple page {page_num} HTTP {resp.status_code}")
+                break
+
+            data = _parse_apple_ssr(resp.text)
+            if not data:
+                print(f"[ats] Apple page {page_num}: no SSR data")
+                break
+
+            search = data.get("loaderData", {}).get("search", {})
+            postings = search.get("searchResults", [])
+            if not postings:
+                break
+        except Exception as e:
+            print(f"[ats] Apple page {page_num} failed: {e}")
+            break
+
+        for j in postings:
+            job_id = j.get("id", "")
+            if job_id in seen_ids:
+                continue
+            seen_ids.add(job_id)
+
+            # Check US location
+            locs = j.get("locations", [])
+            country_ids = [loc.get("countryID", "") for loc in locs]
+            if not any("USA" in c for c in country_ids):
+                continue
+
+            # Freshness check
+            posted_str = j.get("postDateInGMT", "")
+            if posted_str:
+                try:
+                    dt = datetime.fromisoformat(posted_str.replace("Z", "+00:00"))
+                    if not _is_fresh(dt):
+                        continue
+                except (ValueError, TypeError):
+                    pass
+
+            slug_title = j.get("transformedPostingTitle", "")
+            apply_url = f"https://jobs.apple.com/en-us/details/{job_id}/{slug_title}"
+            city = ""
+            if locs:
+                city = locs[0].get("name", "")
+
+            # Fetch full description from detail page
+            description = j.get("jobSummary", "")
+            try:
+                detail_resp = requests.get(
+                    apply_url,
+                    headers={"User-Agent": "Mozilla/5.0"},
+                    timeout=15,
+                )
+                if detail_resp.status_code == 200:
+                    detail_data = _parse_apple_ssr(detail_resp.text)
+                    if detail_data:
+                        jd = (detail_data.get("loaderData", {})
+                              .get("jobDetails", {})
+                              .get("jobsData", {}))
+                        full_desc = jd.get("description", "")
+                        summary = jd.get("jobSummary", "")
+                        if full_desc or summary:
+                            description = (summary + "\n" + full_desc).strip()
+                time.sleep(0.3)
+            except Exception:
+                pass  # fall back to search-page summary
+
+            results.append({
+                "employer_name": company_name,
+                "job_title": j.get("postingTitle", ""),
+                "job_description": description,
+                "job_apply_link": apply_url,
+                "job_city": city,
+                "job_country": "US",
+                "job_apply_is_direct": True,
+                "job_posted_at_datetime_utc": posted_str,
+                "_ats": "apple",
+            })
+
+        time.sleep(0.5)
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Workday — fixed URL: use /en-US/{site}/job/ path
 # ---------------------------------------------------------------------------
 
@@ -423,11 +560,28 @@ def fetch_workday(slug: str, company_name: str, wd_num: int = 5, site: str = "")
         if not _is_us_location(loc_text):
             continue
 
-        bullets = " ".join(j.get("bulletFields", []) or [])
+        # Fetch full job description from detail endpoint
+        description = ""
+        if ext_path:
+            try:
+                detail_url = f"https://{slug}.wd{wd_num}.myworkdayjobs.com/wday/cxs/{slug}/{site}{ext_path}"
+                dr = requests.get(
+                    detail_url,
+                    headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+                    timeout=10,
+                )
+                if dr.status_code == 200:
+                    description = _strip_html(dr.json().get("jobPostingInfo", {}).get("jobDescription", ""))
+                time.sleep(0.3)  # rate limit
+            except Exception:
+                pass
+        if not description:
+            description = " ".join(j.get("bulletFields", []) or [])
+
         results.append({
             "employer_name": company_name,
             "job_title": j.get("title", ""),
-            "job_description": bullets,
+            "job_description": description,
             "job_apply_link": jd_url,
             "job_city": loc_text,
             "job_country": "US",
@@ -681,6 +835,146 @@ def fetch_smartrecruiters(slug: str, company_name: str) -> list:
 
 
 # ---------------------------------------------------------------------------
+# LinkedIn — guest API, no auth required
+# Uses f_C (company ID) filter to search jobs by company
+# ---------------------------------------------------------------------------
+
+_LINKEDIN_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+}
+
+
+def _parse_linkedin_cards(html_text: str) -> list:
+    """Parse LinkedIn job cards from guest API HTML response."""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html_text, "html.parser")
+    jobs = []
+    for card in soup.find_all("div", class_="base-card"):
+        title_el = card.find("h3", class_="base-search-card__title")
+        company_el = card.find("h4", class_="base-search-card__subtitle")
+        location_el = card.find("span", class_="job-search-card__location")
+        link_el = card.find("a", class_="base-card__full-link")
+        time_el = card.find("time")
+
+        title = title_el.get_text(strip=True) if title_el else ""
+        company = company_el.get_text(strip=True) if company_el else ""
+        loc = location_el.get_text(strip=True) if location_el else ""
+        link = link_el["href"] if link_el and link_el.get("href") else ""
+        posted = time_el.get("datetime", "") if time_el else ""
+
+        # Extract job ID from link
+        job_id = ""
+        if link and "-" in link:
+            job_id = link.rstrip("/").split("-")[-1].split("?")[0]
+
+        if title:
+            jobs.append({
+                "title": title,
+                "company": company,
+                "location": loc,
+                "link": link,
+                "job_id": job_id,
+                "posted": posted,
+            })
+    return jobs
+
+
+def _linkedin_job_detail(job_id: str) -> dict:
+    """Fetch full job description from LinkedIn guest API."""
+    from bs4 import BeautifulSoup
+    url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
+    try:
+        resp = requests.get(url, headers=_LINKEDIN_HEADERS, timeout=15)
+        if resp.status_code != 200:
+            return {}
+        soup = BeautifulSoup(resp.text, "html.parser")
+        desc_el = soup.find("div", class_="show-more-less-html__markup")
+        description = desc_el.get_text(" ", strip=True) if desc_el else ""
+        # Try to find apply URL
+        apply_el = soup.find("a", class_="apply-button")
+        apply_url = apply_el.get("href", "") if apply_el else ""
+        return {"description": description, "apply_url": apply_url}
+    except Exception:
+        return {}
+
+
+def fetch_linkedin(linkedin_id: str, company_name: str) -> list:
+    """Fetch jobs for a company via LinkedIn guest API using company ID."""
+    url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+    params = {
+        "keywords": "software engineer",
+        "location": "United States",
+        "start": 0,
+        "f_C": linkedin_id,
+        "f_TPR": "r86400",  # past 24 hours
+    }
+
+    try:
+        resp = requests.get(url, params=params, headers=_LINKEDIN_HEADERS, timeout=15)
+        if resp.status_code != 200:
+            return []
+    except Exception as e:
+        print(f"[ats] LinkedIn search failed for {company_name}: {e}")
+        return []
+
+    cards = _parse_linkedin_cards(resp.text)
+    if not cards:
+        return []
+
+    results = []
+    for card in cards:
+        title = card["title"]
+        loc = card["location"]
+        posted = card["posted"]
+
+        # Basic US filter
+        if loc and not any(state in loc for state in [
+            ", AL", ", AK", ", AZ", ", AR", ", CA", ", CO", ", CT", ", DE", ", FL",
+            ", GA", ", HI", ", ID", ", IL", ", IN", ", IA", ", KS", ", KY", ", LA",
+            ", ME", ", MD", ", MA", ", MI", ", MN", ", MS", ", MO", ", MT", ", NE",
+            ", NV", ", NH", ", NJ", ", NM", ", NY", ", NC", ", ND", ", OH", ", OK",
+            ", OR", ", PA", ", RI", ", SC", ", SD", ", TN", ", TX", ", UT", ", VT",
+            ", VA", ", WA", ", WV", ", WI", ", WY", "United States", "Remote",
+        ]):
+            continue
+
+        # Freshness check
+        if posted:
+            try:
+                dt = datetime.fromisoformat(posted.replace("Z", "+00:00"))
+                if not _is_fresh(dt):
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        # Fetch description (rate-limited)
+        description = ""
+        apply_url = card["link"]
+        if card["job_id"]:
+            time.sleep(0.5)
+            detail = _linkedin_job_detail(card["job_id"])
+            if detail:
+                description = detail.get("description", "")
+                if detail.get("apply_url"):
+                    apply_url = detail["apply_url"]
+
+        results.append({
+            "employer_name": card["company"] or company_name,
+            "job_title": title,
+            "job_description": description,
+            "job_apply_link": apply_url,
+            "job_city": loc,
+            "job_country": "US",
+            "job_apply_is_direct": False,
+            "job_posted_at_datetime_utc": posted,
+            "_ats": "linkedin",
+        })
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # JSearch fallback — for companies without a direct ATS API
 # Uses the same JSearch/RapidAPI key from discovery.py
 # ---------------------------------------------------------------------------
@@ -770,13 +1064,15 @@ def discover_from_ats(companies_path: str = None) -> list:
         ats = (company.get("ats") or "").lower()
         slug = company.get("slug", "")
 
-        # Skip companies with no ATS and no name
+        # Skip companies with no name
         if not name:
             continue
-        # Companies with ats=null use JSearch fallback
-        if not ats:
-            ats = "jsearch"
-        if ats != "jsearch" and not slug:
+        # LinkedIn companies use linkedin_id instead of slug
+        if ats == "linkedin":
+            linkedin_id = company.get("linkedin_id", "")
+            if not linkedin_id:
+                continue
+        elif not ats or not slug:
             continue
 
         print(f"[ats] {name} ({ats})")
@@ -789,6 +1085,8 @@ def discover_from_ats(companies_path: str = None) -> list:
             raw_jobs = fetch_ashby(slug, name)
         elif ats == "amazon":
             raw_jobs = fetch_amazon(name)
+        elif ats == "apple":
+            raw_jobs = fetch_apple(name)
         elif ats == "workday":
             wd_num = company.get("wd_num", 5)
             site = company.get("site", "")
@@ -800,8 +1098,9 @@ def discover_from_ats(companies_path: str = None) -> list:
         elif ats == "oracle_hcm":
             site = company.get("site", "CX_1001")
             raw_jobs = fetch_oracle_hcm(slug, name, site)
-        elif ats == "jsearch":
-            raw_jobs = fetch_jsearch_company(name)
+        elif ats == "linkedin":
+            linkedin_id = company.get("linkedin_id", "")
+            raw_jobs = fetch_linkedin(linkedin_id, name)
         else:
             print(f"[ats] Unknown ATS type '{ats}' for {name} — skipping")
             continue

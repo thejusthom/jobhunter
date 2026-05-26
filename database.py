@@ -124,6 +124,13 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_collected_emails_company ON collected_emails(company);
         """)
 
+        # Add outreach columns if missing
+        cols = {r[1] for r in db.execute("PRAGMA table_info(jobs)").fetchall()}
+        if "outreach_full" not in cols:
+            db.execute("ALTER TABLE jobs ADD COLUMN outreach_full TEXT DEFAULT NULL")
+        if "outreach_short" not in cols:
+            db.execute("ALTER TABLE jobs ADD COLUMN outreach_short TEXT DEFAULT NULL")
+
 
 def migrate_json_to_db():
     """One-time migration from queue.json and application_log.json to SQLite."""
@@ -171,12 +178,12 @@ def get_jobs(status=None, min_score=None, limit=100, offset=0):
         clauses.append("status = ?")
         params.append(status)
     if min_score is not None:
-        clauses.append("score >= ?")
+        clauses.append("match_pct >= ?")
         params.append(min_score)
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
     params.extend([limit, offset])
     with get_db() as db:
-        rows = db.execute(f"SELECT * FROM jobs {where} ORDER BY score DESC, discovered_at DESC LIMIT ? OFFSET ?", params).fetchall()
+        rows = db.execute(f"SELECT * FROM jobs {where} ORDER BY acted_at DESC NULLS LAST, discovered_at DESC, match_pct DESC LIMIT ? OFFSET ?", params).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -187,7 +194,7 @@ def get_job(job_id):
 
 
 def update_job(job_id, **fields):
-    allowed = {"status", "notes", "match_pct", "match_summary", "team", "project", "recommended_resume"}
+    allowed = {"status", "notes", "match_pct", "match_summary", "team", "project", "recommended_resume", "outreach_full", "outreach_short"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
@@ -223,7 +230,7 @@ def count_jobs(status=None, min_score=None):
         clauses.append("status = ?")
         params.append(status)
     if min_score is not None:
-        clauses.append("score >= ?")
+        clauses.append("match_pct >= ?")
         params.append(min_score)
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
     with get_db() as db:

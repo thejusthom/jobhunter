@@ -8,6 +8,7 @@ import Analytics from './pages/Analytics'
 import Recruiters from './pages/Recruiters'
 import Reminders from './pages/Reminders'
 import Emails from './pages/Emails'
+import AutoApply from './pages/AutoApply'
 import Settings from './pages/Settings'
 
 const navItems = [
@@ -18,6 +19,7 @@ const navItems = [
   { to: '/analytics', label: 'Analytics' },
   { to: '/recruiters', label: 'Recruiters' },
   { to: '/emails', label: 'Emails' },
+  { to: '/apply', label: 'Auto Apply' },
   { to: '/reminders', label: 'Reminders' },
   { to: '/settings', label: 'Settings' },
 ]
@@ -62,6 +64,7 @@ export default function App() {
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/recruiters" element={<Recruiters />} />
           <Route path="/emails" element={<Emails />} />
+          <Route path="/apply" element={<AutoApply />} />
           <Route path="/reminders" element={<Reminders />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
