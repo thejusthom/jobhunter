@@ -13,6 +13,7 @@ export default function Dashboard() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [discovering, setDiscovering] = useState(false)
+  const [discoveryPhase, setDiscoveryPhase] = useState('')
   const [freshness, setFreshness] = useState(24)
 
   const load = () => {
@@ -21,21 +22,25 @@ export default function Dashboard() {
 
   useEffect(() => { load() }, [])
 
-  const runDiscovery = async ({ jsearch = true, ats = true, adzuna = true } = {}) => {
+  const runDiscovery = async ({ jsearch = true, ats = true, adzuna = true, simplify = true } = {}) => {
     setDiscovering(true)
+    setDiscoveryPhase('Starting...')
     try {
-      await api.triggerDiscovery({ skip_jsearch: !jsearch, skip_ats: !ats, skip_adzuna: !adzuna, freshness_hours: freshness })
+      await api.triggerDiscovery({ skip_jsearch: !jsearch, skip_ats: !ats, skip_adzuna: !adzuna, skip_simplify: !simplify, freshness_hours: freshness })
       const poll = setInterval(async () => {
         const s = await api.getDiscoveryStatus()
+        setDiscoveryPhase(s.phase || 'Processing...')
         if (!s.running) {
           clearInterval(poll)
           setDiscovering(false)
+          setDiscoveryPhase('')
           load()
         }
-      }, 3000)
+      }, 2000)
     } catch (e) {
       alert(e.message)
       setDiscovering(false)
+      setDiscoveryPhase('')
     }
   }
 
@@ -85,9 +90,11 @@ export default function Dashboard() {
         <div className="bg-surface-raised border border-border rounded-xl p-5">
           <h3 className="text-text-primary font-semibold mb-4">Discovery</h3>
           <div className="text-sm text-text-tertiary mb-4">
-            {discovery.last_run
-              ? `Last run: ${new Date(discovery.last_run).toLocaleString()} (${discovery.new_jobs} new)`
-              : 'Never run'}
+            {discovering && discoveryPhase
+              ? <span className="text-accent animate-pulse">{discoveryPhase}</span>
+              : discovery.last_run
+                ? `Last run: ${new Date(discovery.last_run).toLocaleString()} (${discovery.new_jobs} new)`
+                : 'Never run'}
           </div>
 
           <div className="flex items-center gap-2 mb-4">
@@ -112,25 +119,32 @@ export default function Dashboard() {
               {discovering ? 'Running...' : 'Run All'}
             </button>
             <button
-              onClick={() => runDiscovery({ jsearch: false, adzuna: false })}
+              onClick={() => runDiscovery({ jsearch: false, adzuna: false, simplify: false })}
               disabled={discovering}
               className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
             >
               ATS Only
             </button>
             <button
-              onClick={() => runDiscovery({ ats: false, adzuna: false })}
+              onClick={() => runDiscovery({ ats: false, adzuna: false, simplify: false })}
               disabled={discovering}
               className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
             >
               JSearch Only
             </button>
             <button
-              onClick={() => runDiscovery({ jsearch: false, ats: false })}
+              onClick={() => runDiscovery({ jsearch: false, ats: false, simplify: false })}
               disabled={discovering}
               className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
             >
               Adzuna Only
+            </button>
+            <button
+              onClick={() => runDiscovery({ jsearch: false, ats: false, adzuna: false })}
+              disabled={discovering}
+              className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
+            >
+              Simplify Only
             </button>
           </div>
         </div>
