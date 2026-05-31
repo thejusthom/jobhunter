@@ -48,6 +48,8 @@ def init_db():
             team TEXT DEFAULT NULL,
             project TEXT DEFAULT NULL,
             recommended_resume TEXT DEFAULT NULL,
+            resume_scores TEXT DEFAULT NULL,
+            matched_keywords TEXT DEFAULT NULL,
             notes TEXT DEFAULT ''
         );
 
@@ -116,6 +118,11 @@ def init_db():
             FOREIGN KEY (job_id) REFERENCES jobs(id)
         );
 
+        CREATE TABLE IF NOT EXISTS kv_store (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
         CREATE INDEX IF NOT EXISTS idx_jobs_score ON jobs(score DESC);
         CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status);
@@ -130,6 +137,14 @@ def init_db():
             db.execute("ALTER TABLE jobs ADD COLUMN outreach_full TEXT DEFAULT NULL")
         if "outreach_short" not in cols:
             db.execute("ALTER TABLE jobs ADD COLUMN outreach_short TEXT DEFAULT NULL")
+        if "resume_scores" not in cols:
+            db.execute("ALTER TABLE jobs ADD COLUMN resume_scores TEXT DEFAULT NULL")
+        if "matched_keywords" not in cols:
+            db.execute("ALTER TABLE jobs ADD COLUMN matched_keywords TEXT DEFAULT NULL")
+        if "salary_min" not in cols:
+            db.execute("ALTER TABLE jobs ADD COLUMN salary_min INTEGER DEFAULT NULL")
+        if "salary_max" not in cols:
+            db.execute("ALTER TABLE jobs ADD COLUMN salary_max INTEGER DEFAULT NULL")
 
 
 def migrate_json_to_db():
@@ -172,7 +187,7 @@ def migrate_json_to_db():
 
 # --- Job queries ---
 
-def get_jobs(status=None, min_score=None, limit=100, offset=0):
+def get_jobs(status=None, min_score=None, limit=100, offset=0, search=None):
     clauses, params = [], []
     if status:
         clauses.append("status = ?")
@@ -180,6 +195,10 @@ def get_jobs(status=None, min_score=None, limit=100, offset=0):
     if min_score is not None:
         clauses.append("match_pct >= ?")
         params.append(min_score)
+    if search:
+        clauses.append("(title LIKE ? OR company LIKE ?)")
+        like = f"%{search}%"
+        params.extend([like] * 2)
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
     params.extend([limit, offset])
     with get_db() as db:
@@ -194,7 +213,7 @@ def get_job(job_id):
 
 
 def update_job(job_id, **fields):
-    allowed = {"status", "notes", "match_pct", "match_summary", "team", "project", "recommended_resume", "outreach_full", "outreach_short"}
+    allowed = {"status", "notes", "match_pct", "match_summary", "team", "project", "recommended_resume", "resume_scores", "matched_keywords", "outreach_full", "outreach_short", "description", "salary_min", "salary_max", "title", "company", "location", "ats", "apply_link"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
@@ -209,12 +228,21 @@ def upsert_jobs(entries: list):
     inserted = 0
     with get_db() as db:
         for j in entries:
+            title = j.get("title", "")
+            company = j.get("company", "")
+            # Dedup: skip if same title+company already exists (even from a different source)
+            existing = db.execute(
+                "SELECT id, status FROM jobs WHERE LOWER(title) = LOWER(?) AND LOWER(company) = LOWER(?) LIMIT 1",
+                (title, company),
+            ).fetchone()
+            if existing:
+                continue
             cursor = db.execute("""
                 INSERT OR IGNORE INTO jobs (id, title, company, location, apply_link, ats, score,
                     description, posted_at, discovered_at, source, query, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
             """, (
-                j.get("id"), j.get("title", ""), j.get("company", ""),
+                j.get("id"), title, company,
                 j.get("location", ""), j.get("apply_link", ""), j.get("ats", ""),
                 j.get("score", 0), j.get("description", ""),
                 j.get("posted_at", ""), j.get("discovered_at", ""),
@@ -224,7 +252,7 @@ def upsert_jobs(entries: list):
     return inserted
 
 
-def count_jobs(status=None, min_score=None):
+def count_jobs(status=None, min_score=None, search=None):
     clauses, params = [], []
     if status:
         clauses.append("status = ?")
@@ -232,10 +260,31 @@ def count_jobs(status=None, min_score=None):
     if min_score is not None:
         clauses.append("match_pct >= ?")
         params.append(min_score)
+    if search:
+        clauses.append("(title LIKE ? OR company LIKE ?)")
+        like = f"%{search}%"
+        params.extend([like] * 2)
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
     with get_db() as db:
         row = db.execute(f"SELECT COUNT(*) as count FROM jobs {where}", params).fetchone()
         return row["count"]
+
+
+# ---------------------------------------------------------------------------
+# Key-value store (persists discovery status, etc. across restarts)
+# ---------------------------------------------------------------------------
+
+def kv_get(key: str, default: str = None) -> str | None:
+    with get_db() as db:
+        row = db.execute("SELECT value FROM kv_store WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else default
+
+def kv_set(key: str, value: str):
+    with get_db() as db:
+        db.execute(
+            "INSERT INTO kv_store (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?",
+            (key, value, value),
+        )
 
 
 def get_job_stats():
@@ -256,11 +305,15 @@ def get_evaluated_jobs(limit=20):
 
 # --- Application queries ---
 
-def get_applications(status=None, limit=100, offset=0):
+def get_applications(status=None, search=None, limit=100, offset=0):
     clauses, params = [], []
     if status:
         clauses.append("status = ?")
         params.append(status)
+    if search:
+        clauses.append("(company LIKE ? OR title LIKE ?)")
+        like = f"%{search}%"
+        params.extend([like] * 2)
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
     params.extend([limit, offset])
     with get_db() as db:
