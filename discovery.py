@@ -11,6 +11,11 @@ import requests
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+
+def _log(msg: str):
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"[{ts}] {msg}")
+
 JSEARCH_URL = "https://jsearch.p.rapidapi.com/search-v2"
 JSEARCH_KEY = os.environ.get("JSEARCH_API_KEY", "")
 
@@ -58,7 +63,13 @@ def job_id(job: dict) -> str:
     return hashlib.md5(key.encode()).hexdigest()[:12]
 
 
+_jsearch_rate_limited = False  # module-level flag to skip JSearch after 429
+
 def fetch_jobs(query: str, location: str = "United States", pages: int = 3, date_posted: str = "today") -> list:
+    global _jsearch_rate_limited
+    if _jsearch_rate_limited:
+        return []
+
     headers = {
         "X-RapidAPI-Key": JSEARCH_KEY,
         "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
@@ -75,12 +86,20 @@ def fetch_jobs(query: str, location: str = "United States", pages: int = 3, date
         }
         try:
             resp = requests.get(JSEARCH_URL, headers=headers, params=params, timeout=20)
+            if resp.status_code == 429:
+                _log(f"[discovery] JSearch rate-limited (429) — skipping remaining queries")
+                _jsearch_rate_limited = True
+                return jobs
             resp.raise_for_status()
             data = resp.json().get("data", {}).get("jobs", [])
             jobs.extend(data)
             time.sleep(0.5)
         except Exception as e:
-            print(f"[discovery] Page {page} failed: {e}")
+            _log(f"[discovery] Page {page} failed: {e}")
+            # If it's a 429 wrapped in an exception, bail
+            if "429" in str(e):
+                _jsearch_rate_limited = True
+                return jobs
     return jobs
 
 
@@ -215,9 +234,9 @@ def discover(queries: list[str], location: str = "United States") -> list:
     new_entries = []
 
     for query in queries:
-        print(f"[discovery] Searching: '{query}'")
+        _log(f"[discovery] Searching: '{query}'")
         jobs = fetch_jobs(query, location=location)
-        print(f"[discovery] Found {len(jobs)} raw results")
+        _log(f"[discovery] Found {len(jobs)} raw results")
 
         for job in jobs:
             jid = job_id(job)
@@ -228,21 +247,21 @@ def discover(queries: list[str], location: str = "United States") -> list:
                 continue
 
             if not _is_fresh(job):
-                print(f"[discovery] Stale/reposted: {job.get('employer_name')} — {job.get('job_title')}")
+                _log(f"[discovery] Stale/reposted: {job.get('employer_name')} — {job.get('job_title')}")
                 continue
 
             link = _best_apply_link(job)
             if link is None:
-                print(f"[discovery] No quality link: {job.get('employer_name')} — {job.get('job_title')}")
+                _log(f"[discovery] No quality link: {job.get('employer_name')} — {job.get('job_title')}")
                 continue
 
             if is_blacklisted(job, blacklist):
-                print(f"[discovery] Blacklisted: {job.get('employer_name')} — {job.get('job_title')}")
+                _log(f"[discovery] Blacklisted: {job.get('employer_name')} — {job.get('job_title')}")
                 continue
 
             score = score_job(job)
             if score < SCORE_THRESHOLD:
-                print(f"[discovery] Skipped ({score}): {job.get('employer_name')} — {job.get('job_title')}")
+                _log(f"[discovery] Skipped ({score}): {job.get('employer_name')} — {job.get('job_title')}")
                 continue
 
             # Detect which publisher the link came from
@@ -269,11 +288,11 @@ def discover(queries: list[str], location: str = "United States") -> list:
 
             new_entries.append(entry)
             existing_ids.add(jid)
-            print(f"[discovery] Queued ({score}) [{ats}]: {entry['company']} — {entry['title']}")
+            _log(f"[discovery] Queued ({score}) [{ats}]: {entry['company']} — {entry['title']}")
 
     queue.extend(new_entries)
     save_json(QUEUE_PATH, queue)
-    print(f"[discovery] Done. {len(new_entries)} new jobs queued.")
+    _log(f"[discovery] Done. {len(new_entries)} new jobs queued.")
     return new_entries
 
 
