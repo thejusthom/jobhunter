@@ -4,6 +4,7 @@ import os
 import sys
 import re
 import json
+import html
 import urllib.parse
 from pathlib import Path
 from datetime import datetime, timezone
@@ -11,6 +12,10 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 load_dotenv()
+
+def _log(msg: str):
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"[{ts}] {msg}")
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,7 +30,7 @@ from discovery import (
     load_json, save_json, score_job, is_blacklisted, already_applied, job_id,
     fetch_jobs, _best_apply_link, _is_fresh, ALLOWED_PUBLISHERS,
 )
-from ats_discovery import discover_from_ats, SKIP_TITLE_KEYWORDS, _job_id
+from ats_discovery import discover_from_ats, SKIP_TITLE_KEYWORDS, _job_id, fetch_simplify_github
 from resume_selector import get_resume_type, get_resume_text, RESUME_KEYWORDS
 from auto_apply_engine import engine as auto_apply_engine
 
@@ -98,6 +103,7 @@ class DiscoverRequest(BaseModel):
     skip_jsearch: bool = False
     skip_ats: bool = False
     skip_adzuna: bool = False
+    skip_simplify: bool = False
     freshness_hours: int = 24
 
 
@@ -105,15 +111,28 @@ class DiscoverRequest(BaseModel):
 # Job endpoints
 # ---------------------------------------------------------------------------
 
+def _parse_json_fields(job: dict) -> dict:
+    """Parse resume_scores and matched_keywords from JSON strings."""
+    for field in ("resume_scores", "matched_keywords"):
+        val = job.get(field)
+        if isinstance(val, str):
+            try:
+                job[field] = json.loads(val)
+            except (json.JSONDecodeError, TypeError):
+                job[field] = None
+    return job
+
 @app.get("/api/jobs")
 def list_jobs(
     status: str | None = None,
     min_score: float | None = None,
     limit: int = 25,
     offset: int = 0,
+    search: str | None = None,
 ):
-    jobs = db.get_jobs(status=status, min_score=min_score, limit=limit, offset=offset)
-    total = db.count_jobs(status=status, min_score=min_score)
+    jobs = db.get_jobs(status=status, min_score=min_score, limit=limit, offset=offset, search=search)
+    jobs = [_parse_json_fields(j) for j in jobs]
+    total = db.count_jobs(status=status, min_score=min_score, search=search)
     return {"jobs": jobs, "total": total, "limit": limit, "offset": offset}
 
 @app.get("/api/jobs/stats")
@@ -129,7 +148,7 @@ def get_job(job_id: str):
     job = db.get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
-    return job
+    return _parse_json_fields(job)
 
 @app.patch("/api/jobs/{job_id}")
 def update_job(job_id: str, body: JobUpdate):
@@ -137,23 +156,80 @@ def update_job(job_id: str, body: JobUpdate):
     return db.get_job(job_id)
 
 
-class AddJobByUrl(BaseModel):
-    url: str
-
-@app.post("/api/jobs/add-by-url")
-def add_job_by_url(body: AddJobByUrl):
-    """Fetch job details from a URL and add to the queue."""
-    import hashlib
+def _fetch_jd_from_url(url: str) -> dict:
+    """
+    Fetch job description from ATS URL. Returns dict with available fields:
+    title, company, location, description, apply_link, ats.
+    """
     from ats_discovery import _strip_html
 
-    url = body.url.strip()
-    if not url:
-        raise HTTPException(400, "URL is required")
-
-    title, company, location, description, apply_link = "", "", "", "", url
-    ats_type = ""
+    result = {"title": "", "company": "", "location": "", "description": "", "apply_link": url, "ats": ""}
 
     try:
+        # --- Oracle HCM / Fusion (*.oraclecloud.com) ---
+        oracle_match = re.match(
+            r"https?://([^/]+\.oraclecloud\.com)/hcmUI/CandidateExperience/\w+/sites/\w+/job/(\d+)",
+            url
+        )
+        if oracle_match:
+            oracle_host, oracle_job_id = oracle_match.groups()
+            try:
+                # Oracle CX REST API — job detail endpoint
+                api_url = f"https://{oracle_host}/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails/{oracle_job_id}?onlyData=true"
+                r = http_requests.get(api_url, timeout=10, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept": "application/json",
+                })
+                if r.status_code == 200:
+                    data = r.json()
+                    result["title"] = data.get("Title", "")
+                    result["location"] = data.get("PrimaryLocation", "")
+                    # Combine all description sections
+                    desc_parts = []
+                    for key in ["ExternalResponsibilitiesStr", "CorporateDescriptionStr", "ExternalQualificationsStr"]:
+                        val = data.get(key)
+                        if val:
+                            desc_parts.append(_strip_html(val))
+                    result["description"] = "\n\n".join(desc_parts)
+                    result["apply_link"] = url
+                    result["ats"] = "oracle_hcm"
+                    # Try to get company from OG tags if API doesn't have it
+                    if not result.get("company"):
+                        try:
+                            page_r = http_requests.get(url, timeout=8, headers={
+                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                            })
+                            og_site = re.search(r'property="og:site_name"\s+content="([^"]+)"', page_r.text)
+                            if og_site:
+                                result["company"] = og_site.group(1).strip()
+                        except Exception:
+                            pass
+                    if result["title"]:
+                        return result
+            except Exception as e:
+                _log(f"[fetch-jd] Oracle HCM API error: {e}")
+            # Fallback: OG tags from page
+            try:
+                r = http_requests.get(url, timeout=10, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                })
+                if r.status_code == 200:
+                    og_title = re.search(r'property="og:title"\s+content="([^"]+)"', r.text)
+                    og_desc = re.search(r'property="og:description"\s+content="([^"]+)"', r.text)
+                    og_site = re.search(r'property="og:site_name"\s+content="([^"]+)"', r.text)
+                    if og_title:
+                        result["title"] = html.unescape(og_title.group(1).strip())
+                    if og_desc:
+                        result["description"] = html.unescape(og_desc.group(1).strip())
+                    if og_site:
+                        result["company"] = og_site.group(1).strip()
+                    result["apply_link"] = url
+                    result["ats"] = "oracle_hcm"
+                    if result["title"]:
+                        return result
+            except Exception as e:
+                _log(f"[fetch-jd] Oracle HCM OG fallback error: {e}")
+
         # --- Workday ---
         wd_match = re.match(
             r"https?://(\w+)\.wd(\d+)\.myworkdayjobs\.com/(?:en-US/)?([^/]+)(/job/.+)",
@@ -169,19 +245,55 @@ def add_job_by_url(body: AddJobByUrl):
             )
             if r.status_code == 200:
                 info = r.json().get("jobPostingInfo", {})
-                title = info.get("title", "")
-                description = _strip_html(info.get("jobDescription", ""))
-                location = info.get("location", "")
-                company = slug.replace("-", " ").title()
-                apply_link = info.get("externalUrl") or url
-                ats_type = "workday"
+                result["title"] = info.get("title", "")
+                result["description"] = _strip_html(info.get("jobDescription", ""))
+                result["location"] = info.get("location", "")
+                result["company"] = slug.replace("-", " ").title()
+                result["apply_link"] = info.get("externalUrl") or url
+                result["ats"] = "workday"
+                return result
 
         # --- Greenhouse ---
         gh_match = re.match(
-            r"https?://boards\.greenhouse\.io/(?:embed/)?(?:job_app\?token=|)(\w+)(?:/jobs/(\d+))?",
+            r"https?://(?:boards\.greenhouse\.io/(?:embed/)?(?:job_app\?token=|)|[^/]+\.greenhouse\.io/)(\w+)(?:/jobs/(\d+))?",
             url
         )
-        if not wd_match and gh_match:
+        # Also try: company.greenhouse.io URL pattern (e.g. https://job-boards.greenhouse.io/company/jobs/123)
+        if not gh_match:
+            gh_match = re.match(r"https?://job-boards\.greenhouse\.io/(\w+)/jobs/(\d+)", url)
+
+        # Detect gh_jid query parameter on any custom career site (e.g. careers.upstart.com?gh_jid=123)
+        if not gh_match:
+            parsed = urllib.parse.urlparse(url)
+            qs = urllib.parse.parse_qs(parsed.query)
+            gh_jid = (qs.get("gh_jid") or qs.get("gh_jid[]") or [None])[0]
+            if gh_jid and gh_jid.isdigit():
+                # Try to figure out the board name from the domain (e.g. careers.upstart.com -> upstart)
+                domain_parts = parsed.hostname.split(".")
+                # Typically: careers.COMPANY.com or jobs.COMPANY.com -> take the second part
+                board_guess = None
+                if len(domain_parts) >= 2:
+                    board_guess = domain_parts[-2]  # e.g. "upstart" from "careers.upstart.com"
+                if board_guess:
+                    _log(f"[fetch-jd] Detected gh_jid={gh_jid} on {parsed.hostname}, trying Greenhouse API with board={board_guess}")
+                    r = http_requests.get(
+                        f"https://boards-api.greenhouse.io/v1/boards/{board_guess}/jobs/{gh_jid}",
+                        timeout=10,
+                    )
+                    if r.status_code == 200:
+                        data = r.json()
+                        result["title"] = data.get("title", "")
+                        result["description"] = _strip_html(data.get("content", ""))
+                        loc = data.get("location", {})
+                        result["location"] = loc.get("name", "") if isinstance(loc, dict) else str(loc)
+                        result["company"] = data.get("company", {}).get("name", board_guess.title())
+                        result["apply_link"] = data.get("absolute_url", url)
+                        result["ats"] = "greenhouse"
+                        return result
+                    else:
+                        _log(f"[fetch-jd] Greenhouse API returned {r.status_code} for board={board_guess}, gh_jid={gh_jid}")
+
+        if gh_match:
             board = gh_match.group(1)
             job_num = gh_match.group(2)
             if job_num:
@@ -191,54 +303,212 @@ def add_job_by_url(body: AddJobByUrl):
                 )
                 if r.status_code == 200:
                     data = r.json()
-                    title = data.get("title", "")
-                    description = _strip_html(data.get("content", ""))
+                    result["title"] = data.get("title", "")
+                    result["description"] = _strip_html(data.get("content", ""))
                     loc = data.get("location", {})
-                    location = loc.get("name", "") if isinstance(loc, dict) else str(loc)
-                    company = data.get("company", {}).get("name", board)
-                    apply_link = data.get("absolute_url", url)
-                    ats_type = "greenhouse"
+                    result["location"] = loc.get("name", "") if isinstance(loc, dict) else str(loc)
+                    result["company"] = data.get("company", {}).get("name", board)
+                    result["apply_link"] = data.get("absolute_url", url)
+                    result["ats"] = "greenhouse"
+                    return result
 
         # --- Lever ---
         lever_match = re.match(r"https?://jobs\.lever\.co/([^/]+)/([a-f0-9-]+)", url)
-        if not wd_match and not gh_match and lever_match:
+        if lever_match:
             board, posting_id = lever_match.groups()
             r = http_requests.get(f"https://api.lever.co/v0/postings/{board}/{posting_id}", timeout=10)
             if r.status_code == 200:
                 data = r.json()
-                title = data.get("text", "")
-                description = _strip_html(data.get("descriptionPlain", "") or data.get("description", ""))
+                result["title"] = data.get("text", "")
+                result["description"] = _strip_html(data.get("descriptionPlain", "") or data.get("description", ""))
                 loc_parts = data.get("categories", {})
-                location = loc_parts.get("location", "") if isinstance(loc_parts, dict) else ""
-                company = board.replace("-", " ").title()
-                apply_link = data.get("applyUrl") or data.get("hostedUrl") or url
-                ats_type = "lever"
+                result["location"] = loc_parts.get("location", "") if isinstance(loc_parts, dict) else ""
+                result["company"] = board.replace("-", " ").title()
+                result["apply_link"] = data.get("applyUrl") or data.get("hostedUrl") or url
+                result["ats"] = "lever"
+                return result
 
-        # --- Ashby ---
+        # --- Ashby (GraphQL — old /posting-api endpoint is dead) ---
         ashby_match = re.match(r"https?://jobs\.ashbyhq\.com/([^/]+)/([a-f0-9-]+)", url)
-        if not wd_match and not gh_match and not lever_match and ashby_match:
+        if ashby_match:
             board, posting_id = ashby_match.groups()
-            r = http_requests.get(f"https://api.ashbyhq.com/posting-api/job-board/{board}", timeout=10)
+            gql_query = (
+                "query ApiJobPosting($organizationHostedJobsPageName: String!, $jobPostingId: String!) { "
+                "jobPosting(organizationHostedJobsPageName: $organizationHostedJobsPageName, "
+                "jobPostingId: $jobPostingId) { id title descriptionHtml locationName employmentType } }"
+            )
+            r = http_requests.post(
+                "https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobPosting",
+                json={
+                    "operationName": "ApiJobPosting",
+                    "variables": {"organizationHostedJobsPageName": board, "jobPostingId": posting_id},
+                    "query": gql_query,
+                },
+                headers={"Content-Type": "application/json"},
+                timeout=10,
+            )
             if r.status_code == 200:
-                data = r.json()
-                for j in data.get("jobs", []):
-                    if j.get("id") == posting_id:
-                        title = j.get("title", "")
-                        description = _strip_html(j.get("descriptionHtml", "") or j.get("descriptionPlain", ""))
-                        location = j.get("location", "")
-                        company = data.get("organizationName", board)
-                        apply_link = j.get("jobUrl") or url
-                        ats_type = "ashby"
-                        break
+                data = (r.json().get("data") or {}).get("jobPosting") or {}
+                if data:
+                    result["title"] = data.get("title", "")
+                    result["description"] = _strip_html(data.get("descriptionHtml", ""))
+                    result["location"] = data.get("locationName", "")
+                    result["company"] = board.replace("-", " ").title()
+                    result["apply_link"] = url
+                    result["ats"] = "ashby"
+                    return result
 
-        # --- Fallback: scrape page title ---
-        if not title:
+        # --- LinkedIn ---
+        li_match = re.match(r"https?://(?:www\.)?linkedin\.com/jobs/view/(\d+)", url)
+        if li_match:
+            li_job_id = li_match.group(1)
+            try:
+                # Use LinkedIn's guest job posting API — returns full HTML with JD
+                guest_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{li_job_id}"
+                r = http_requests.get(guest_url, timeout=10, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                })
+                if r.status_code == 200:
+                    page = r.text
+                    # Title from h2.top-card-layout__title
+                    t_m = re.search(r'<h2[^>]*class="[^"]*top-card-layout__title[^"]*"[^>]*>([^<]+)', page, re.I)
+                    if t_m:
+                        result["title"] = t_m.group(1).strip()
+                    # Company from a.topcard__org-name-link
+                    c_m = re.search(r'<a[^>]*class="[^"]*topcard__org-name-link[^"]*"[^>]*>([^<]+)', page, re.I)
+                    if c_m:
+                        result["company"] = c_m.group(1).strip()
+                    # Location from span.topcard__flavor--bullet
+                    l_m = re.search(r'<span[^>]*class="[^"]*topcard__flavor--bullet[^"]*"[^>]*>([^<]+)', page, re.I)
+                    if l_m:
+                        result["location"] = l_m.group(1).strip()
+                    # Description from div.description
+                    d_m = re.search(r'<div[^>]+class="[^"]*description[^"]*"[^>]*>(.*?)</div>', page, re.S | re.I)
+                    if d_m:
+                        result["description"] = _strip_html(d_m.group(1))
+
+                    result["apply_link"] = url
+                    result["ats"] = "linkedin"
+                    if result["title"]:
+                        return result
+            except Exception as e:
+                _log(f"[fetch-jd] LinkedIn guest API error: {e}")
+
+            # Fallback: parse from main page <title>
+            try:
+                r = http_requests.get(url, timeout=10, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }, allow_redirects=True)
+                if r.status_code == 200:
+                    title_m = re.search(r"<title[^>]*>([^<]+)</title>", r.text, re.I)
+                    if title_m:
+                        raw_title = re.sub(r'\s*\|\s*LinkedIn\s*$', '', title_m.group(1).strip()).strip()
+                        # "Company hiring Title in Location"
+                        hire_m = re.match(r'^(.+?)\s+hiring\s+(.+?)\s+in\s+(.+)$', raw_title)
+                        if hire_m:
+                            result["company"] = hire_m.group(1).strip()
+                            result["title"] = hire_m.group(2).strip()
+                            result["location"] = hire_m.group(3).strip()
+                        else:
+                            result["title"] = raw_title
+                    result["apply_link"] = url
+                    result["ats"] = "linkedin"
+                    if result["title"]:
+                        return result
+            except Exception as e:
+                _log(f"[fetch-jd] LinkedIn fallback error: {e}")
+
+        # --- Fallback: scrape page for text ---
+        r = http_requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"}, allow_redirects=True)
+        if r.status_code == 200:
+            html_content = r.text
+            # Remove script tags, style tags, and their content before stripping HTML
+            cleaned = re.sub(r'<script[^>]*>.*?</script>', ' ', html_content, flags=re.S | re.I)
+            cleaned = re.sub(r'<style[^>]*>.*?</style>', ' ', cleaned, flags=re.S | re.I)
+            cleaned = re.sub(r'<noscript[^>]*>.*?</noscript>', ' ', cleaned, flags=re.S | re.I)
+            # Remove HTML comments
+            cleaned = re.sub(r'<!--.*?-->', ' ', cleaned, flags=re.S)
+            # Remove import maps and JSON-LD blocks
+            cleaned = re.sub(r'<script\s+type=["\']importmap["\'][^>]*>.*?</script>', ' ', cleaned, flags=re.S | re.I)
+
+            text = _strip_html(cleaned)
+
+            # Filter out lines that look like JS/CSS artifacts
+            lines = text.split('\n')
+            good_lines = []
+            for line in lines:
+                line_stripped = line.strip()
+                if not line_stripped:
+                    continue
+                # Skip lines that look like JS: import statements, variable assignments, URLs, etc.
+                if re.match(r'^(import |export |var |let |const |function |window\.|document\.|\{|\}|//|/\*)', line_stripped):
+                    continue
+                if re.match(r'^https?://', line_stripped):
+                    continue
+                # Skip lines that are mostly special characters (minified code)
+                alnum_count = sum(1 for c in line_stripped if c.isalnum() or c == ' ')
+                if len(line_stripped) > 20 and alnum_count / len(line_stripped) < 0.5:
+                    continue
+                good_lines.append(line_stripped)
+
+            text = '\n'.join(good_lines).strip()
+            # Collapse multiple whitespace
+            text = re.sub(r'\n{3,}', '\n\n', text)
+            text = re.sub(r'[ \t]{2,}', ' ', text)
+
+            if len(text) > 200:
+                result["description"] = text[:15000]
+
+            # Prefer OG/meta tags over raw <title> for structured data
+            og_title = re.search(r'property="og:title"\s+content="([^"]+)"', html_content, re.I)
+            og_desc = re.search(r'property="og:description"\s+content="([^"]+)"', html_content, re.I)
+            og_site = re.search(r'property="og:site_name"\s+content="([^"]+)"', html_content, re.I)
+            if og_title:
+                result["title"] = html.unescape(og_title.group(1).strip())
+            if og_desc and not result["description"]:
+                result["description"] = html.unescape(og_desc.group(1).strip())
+            if og_site and not result["company"]:
+                result["company"] = og_site.group(1).strip()
+
+            if not result["title"]:
+                title_m = re.search(r"<title[^>]*>([^<]+)</title>", html_content, re.I)
+                if title_m:
+                    result["title"] = title_m.group(1).strip()
+
+    except Exception as e:
+        _log(f"[fetch-jd] Error fetching {url}: {e}")
+
+    return result
+
+
+class AddJobByUrl(BaseModel):
+    url: str
+
+@app.post("/api/jobs/add-by-url")
+def add_job_by_url(body: AddJobByUrl):
+    """Fetch job details from a URL and add to the queue."""
+    import hashlib
+
+    url = body.url.strip()
+    if not url:
+        raise HTTPException(400, "URL is required")
+
+    fetched = _fetch_jd_from_url(url)
+    title = fetched["title"]
+    company = fetched["company"]
+    location = fetched["location"]
+    description = fetched["description"]
+    apply_link = fetched["apply_link"]
+    ats_type = fetched["ats"]
+
+    if not title:
+        # Last resort: try to parse from URL
+        try:
             r = http_requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
             if r.status_code == 200:
                 title_match = re.search(r"<title[^>]*>([^<]+)</title>", r.text, re.I)
                 if title_match:
                     raw_title = title_match.group(1).strip()
-                    # Try to extract company from common patterns like "Title - Company"
                     for sep in [" - ", " | ", " at ", " — ", " – "]:
                         if sep in raw_title:
                             parts = raw_title.split(sep)
@@ -247,9 +517,8 @@ def add_job_by_url(body: AddJobByUrl):
                             break
                     else:
                         title = raw_title
-
-    except Exception as e:
-        print(f"[add-by-url] Error fetching {url}: {e}")
+        except Exception:
+            pass
 
     if not title:
         raise HTTPException(400, "Could not extract job details from URL")
@@ -271,7 +540,16 @@ def add_job_by_url(body: AddJobByUrl):
         "query": "",
     }
     db.upsert_jobs([entry])
-    return db.get_job(jid)
+    # Force-update key fields in case the job already existed with stale data
+    overwrite = {}
+    if title: overwrite["title"] = title
+    if company: overwrite["company"] = company
+    if location: overwrite["location"] = location
+    if description: overwrite["description"] = description
+    if ats_type: overwrite["ats"] = ats_type
+    if overwrite:
+        db.update_job(jid, **overwrite)
+    return _parse_json_fields(db.get_job(jid))
 
 
 # ---------------------------------------------------------------------------
@@ -279,8 +557,8 @@ def add_job_by_url(body: AddJobByUrl):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/applications")
-def list_applications(status: str | None = None, limit: int = 100, offset: int = 0):
-    return db.get_applications(status=status, limit=limit, offset=offset)
+def list_applications(status: str | None = None, search: str | None = None, limit: int = 100, offset: int = 0):
+    return db.get_applications(status=status, search=search, limit=limit, offset=offset)
 
 @app.get("/api/applications/stats")
 def application_stats():
@@ -292,6 +570,85 @@ def create_application(body: ApplicationCreate):
     if body.job_id:
         db.update_job(body.job_id, status="applied")
     return {"id": app_id}
+
+class ApplicationAddByUrl(BaseModel):
+    url: str
+
+@app.post("/api/applications/add-by-url")
+def add_application_by_url(body: ApplicationAddByUrl):
+    """Fetch job details from a URL and create an application directly."""
+    import hashlib
+
+    url = body.url.strip()
+    if not url:
+        raise HTTPException(400, "URL is required")
+
+    fetched = _fetch_jd_from_url(url)
+    title = fetched["title"]
+    company = fetched["company"]
+    location = fetched["location"]
+    description = fetched["description"]
+    apply_link = fetched["apply_link"]
+    ats_type = fetched["ats"]
+
+    if not title:
+        try:
+            r = http_requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code == 200:
+                title_match = re.search(r"<title[^>]*>([^<]+)</title>", r.text, re.I)
+                if title_match:
+                    raw_title = title_match.group(1).strip()
+                    for sep in [" - ", " | ", " at ", " — ", " – "]:
+                        if sep in raw_title:
+                            parts = raw_title.split(sep)
+                            title = parts[0].strip()
+                            company = parts[1].strip() if len(parts) > 1 else ""
+                            break
+                    else:
+                        title = raw_title
+        except Exception:
+            pass
+
+    if not title:
+        raise HTTPException(400, "Could not extract job details from URL")
+
+    # Also add to job queue so we have the JD stored
+    jid = hashlib.md5(url.encode()).hexdigest()[:12]
+    entry = {
+        "id": jid,
+        "title": title,
+        "company": company,
+        "location": location,
+        "apply_link": apply_link,
+        "ats": ats_type,
+        "score": 0,
+        "description": description,
+        "posted_at": "",
+        "discovered_at": datetime.now(timezone.utc).isoformat(),
+        "source": "manual_url",
+        "query": "",
+    }
+    db.upsert_jobs([entry])
+    # Force-update key fields in case the job already existed with stale data
+    overwrite = {"status": "applied"}
+    if title: overwrite["title"] = title
+    if company: overwrite["company"] = company
+    if location: overwrite["location"] = location
+    if description: overwrite["description"] = description
+    if ats_type: overwrite["ats"] = ats_type
+    db.update_job(jid, **overwrite)
+
+    # Create the application
+    app_id = db.create_application(
+        job_id=jid,
+        title=title,
+        company=company,
+        location=location,
+        apply_link=apply_link,
+        source=ats_type or "manual_url",
+    )
+
+    return {"id": app_id, "title": title, "company": company, "location": location, "job_id": jid}
 
 @app.patch("/api/applications/{app_id}")
 def update_application(app_id: int, body: ApplicationUpdate):
@@ -340,7 +697,16 @@ def complete_reminder(reminder_id: int):
 # Discovery endpoint (runs in background)
 # ---------------------------------------------------------------------------
 
-discovery_status = {"running": False, "last_run": None, "new_jobs": 0}
+def _load_discovery_status():
+    """Restore persisted discovery status from DB (survives server restarts)."""
+    return {
+        "running": False,
+        "last_run": db.kv_get("discovery_last_run"),
+        "new_jobs": int(db.kv_get("discovery_new_jobs", "0")),
+        "phase": "",
+    }
+
+discovery_status = _load_discovery_status()
 
 ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID", "")
 ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY", "")
@@ -371,7 +737,7 @@ def _fetch_adzuna(query: str, location: str = "us", pages: int = 3, max_days_old
                 timeout=15,
             )
             if resp.status_code != 200:
-                print(f"[adzuna] Page {page} failed: HTTP {resp.status_code}")
+                _log(f"[adzuna] Page {page} failed: HTTP {resp.status_code}")
                 break
             data = resp.json()
             results = data.get("results", [])
@@ -381,13 +747,14 @@ def _fetch_adzuna(query: str, location: str = "us", pages: int = 3, max_days_old
             import time
             time.sleep(0.3)
         except Exception as e:
-            print(f"[adzuna] Page {page} failed: {e}")
+            _log(f"[adzuna] Page {page} failed: {e}")
             break
     return jobs
 
 
-def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_ats: bool, freshness_hours: int = 24, skip_adzuna: bool = False):
+def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_ats: bool, freshness_hours: int = 24, skip_adzuna: bool = False, skip_simplify: bool = False):
     discovery_status["running"] = True
+    discovery_status["phase"] = "Starting..."
     total_new = 0
 
     date_posted_map = {24: "today", 72: "3days", 168: "week", 720: "month"}
@@ -395,6 +762,7 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
 
     try:
         if not skip_jsearch and JSEARCH_KEY:
+            discovery_status["phase"] = "Fetching JSearch..."
             from config import SEARCH_KEYWORDS
             qs = queries or SEARCH_KEYWORDS
             blacklist = load_json(BLACKLIST_PATH)
@@ -447,6 +815,7 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
 
         # --- Adzuna ---
         if not skip_adzuna and ADZUNA_APP_ID:
+            discovery_status["phase"] = "Fetching Adzuna..."
             from config import SEARCH_KEYWORDS
             from ats_discovery import _is_us_location
             qs = queries or SEARCH_KEYWORDS
@@ -455,7 +824,7 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
 
             for query in qs:
                 raw = _fetch_adzuna(query, location="us", pages=2, max_days_old=max_days)
-                print(f"[adzuna] '{query}': {len(raw)} results")
+                _log(f"[adzuna] '{query}': {len(raw)} results")
                 for aj in raw:
                     company_name = (aj.get("company") or {}).get("display_name", "")
                     title = aj.get("title", "")
@@ -505,6 +874,7 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
                     total_new += db.upsert_jobs([entry])
 
         if not skip_ats:
+            discovery_status["phase"] = "Fetching ATS companies..."
             companies = json.loads(Path("companies.json").read_text())
             import ats_discovery
             from ats_discovery import (
@@ -512,42 +882,123 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
                 fetch_amazon, fetch_workday, fetch_pinpoint,
                 fetch_linkedin,
             )
+            from concurrent.futures import ThreadPoolExecutor, as_completed
             import time
             ats_discovery.FRESHNESS_DAYS = max(1, freshness_hours / 24)
 
-            for company in companies:
+            # Track consecutive failures per ATS to bail early when service is down
+            ats_fail_count = {}
+            ATS_FAIL_THRESHOLD = 3  # skip remaining companies after 3 consecutive failures
+            skipped_ats_types = set()
+
+            # Group companies by ATS type for smarter batching
+            def _fetch_company(company):
                 name = company.get("name", "")
-                ats = (company.get("ats") or "").lower()
+                ats_type = (company.get("ats") or "").lower()
                 slug = company.get("slug", "")
                 linkedin_id = company.get("linkedin_id", "")
-                if not name or not ats:
-                    continue
-                if ats not in ("linkedin", "amazon", "apple") and not slug:
-                    continue
+
+                if not name or not ats_type:
+                    return ats_type, name, [], False
+                if ats_type not in ("linkedin", "amazon", "apple") and not slug:
+                    return ats_type, name, [], False
                 if db.is_company_blocked(name):
-                    continue
+                    return ats_type, name, [], False
 
-                if ats == "greenhouse":
-                    raw_jobs = fetch_greenhouse(slug, name)
-                elif ats == "lever":
-                    raw_jobs = fetch_lever(slug, name)
-                elif ats == "ashby":
-                    raw_jobs = fetch_ashby(slug, name)
-                elif ats == "amazon":
-                    raw_jobs = fetch_amazon(name)
-                elif ats == "linkedin":
-                    if not linkedin_id:
+                try:
+                    if ats_type == "greenhouse":
+                        raw = fetch_greenhouse(slug, name)
+                    elif ats_type == "lever":
+                        raw = fetch_lever(slug, name)
+                    elif ats_type == "ashby":
+                        raw = fetch_ashby(slug, name)
+                    elif ats_type == "amazon":
+                        raw = fetch_amazon(name)
+                    elif ats_type == "linkedin":
+                        if not linkedin_id:
+                            return ats_type, name, [], False
+                        raw = fetch_linkedin(linkedin_id, name)
+                    elif ats_type == "workday":
+                        raw = fetch_workday(slug, name, company.get("wd_num", 5), company.get("site", ""))
+                    elif ats_type == "pinpoint":
+                        raw = fetch_pinpoint(slug, name)
+                    else:
+                        return ats_type, name, [], False
+                    return ats_type, name, raw, False
+                except Exception as e:
+                    _log(f"[ats] {name} ({ats_type}) fetch error: {e}")
+                    return ats_type, name, [], True  # True = was an error
+
+            # Process companies with concurrent fetching
+            blacklist = load_json(BLACKLIST_PATH)
+            with ThreadPoolExecutor(max_workers=12) as executor:
+                futures = {}
+                for company in companies:
+                    ats_type = (company.get("ats") or "").lower()
+                    if ats_type in skipped_ats_types:
                         continue
-                    raw_jobs = fetch_linkedin(linkedin_id, name)
-                elif ats == "workday":
-                    raw_jobs = fetch_workday(slug, name, company.get("wd_num", 5), company.get("site", ""))
-                elif ats == "pinpoint":
-                    raw_jobs = fetch_pinpoint(slug, name)
-                else:
-                    continue
+                    f = executor.submit(_fetch_company, company)
+                    futures[f] = company
 
+                for future in as_completed(futures):
+                    ats_type, name, raw_jobs, was_error = future.result()
+
+                    # Track consecutive failures per ATS type
+                    if was_error or (not raw_jobs and ats_type in ("ashby",)):
+                        ats_fail_count[ats_type] = ats_fail_count.get(ats_type, 0) + 1
+                        if ats_fail_count[ats_type] >= ATS_FAIL_THRESHOLD:
+                            _log(f"[ats] {ats_type} failed {ATS_FAIL_THRESHOLD}x consecutively — skipping remaining {ats_type} companies")
+                            skipped_ats_types.add(ats_type)
+                    else:
+                        ats_fail_count[ats_type] = 0  # reset on success
+
+                    for job in raw_jobs:
+                        jid = _job_id(
+                            job.get("employer_name", ""),
+                            job.get("job_title", ""),
+                            job.get("job_apply_link", ""),
+                        )
+                        title_lower = (job.get("job_title") or "").lower()
+                        if any(kw in title_lower for kw in SKIP_TITLE_KEYWORDS):
+                            continue
+                        if is_blacklisted(job, blacklist):
+                            continue
+                        sc = score_job(job)
+                        threshold = 25 if ats_type == "workday" else SCORE_THRESHOLD
+                        if sc < threshold:
+                            continue
+                        skip, _ = llm.hard_skip_check(
+                            job.get("job_title", ""),
+                            job.get("job_description", ""),
+                            name,
+                        )
+                        if skip:
+                            continue
+
+                        entry = {
+                            "id": jid,
+                            "title": job.get("job_title"),
+                            "company": name,
+                            "location": job.get("job_city", ""),
+                            "apply_link": job.get("job_apply_link"),
+                            "ats": ats_type,
+                            "score": sc,
+                            "description": job.get("job_description", ""),
+                            "posted_at": job.get("job_posted_at_datetime_utc", ""),
+                            "discovered_at": datetime.now(timezone.utc).isoformat(),
+                            "source": ats_type,
+                            "query": "",
+                        }
+                        total_new += db.upsert_jobs([entry])
+
+        # --- SimplifyJobs GitHub (New-Grad-Positions) ---
+        if not skip_simplify:
+            discovery_status["phase"] = "Fetching Simplify GitHub..."
+            try:
+                simplify_jobs = fetch_simplify_github(freshness_days=max(1, freshness_hours / 24))
+                _log(f"[simplify] {len(simplify_jobs)} jobs passed filters")
                 blacklist = load_json(BLACKLIST_PATH)
-                for job in raw_jobs:
+                for job in simplify_jobs:
                     jid = _job_id(
                         job.get("employer_name", ""),
                         job.get("job_title", ""),
@@ -558,38 +1009,40 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
                         continue
                     if is_blacklisted(job, blacklist):
                         continue
-                    sc = score_job(job)
-                    threshold = 25 if ats == "workday" else SCORE_THRESHOLD
-                    if sc < threshold:
+                    if db.is_company_blocked(job.get("employer_name", "")):
                         continue
-                    skip, _ = llm.hard_skip_check(
-                        job.get("job_title", ""),
-                        job.get("job_description", ""),
-                        name,
-                    )
-                    if skip:
+                    sc = score_job(job)
+                    # Simplify listings have no description, so score is title-only — use lower threshold
+                    if sc < 25:
                         continue
 
                     entry = {
                         "id": jid,
                         "title": job.get("job_title"),
-                        "company": name,
+                        "company": job.get("employer_name", ""),
                         "location": job.get("job_city", ""),
                         "apply_link": job.get("job_apply_link"),
-                        "ats": ats,
+                        "ats": "simplify",
                         "score": sc,
                         "description": job.get("job_description", ""),
                         "posted_at": job.get("job_posted_at_datetime_utc", ""),
                         "discovered_at": datetime.now(timezone.utc).isoformat(),
-                        "source": ats,
+                        "source": "simplify",
                         "query": "",
                     }
                     total_new += db.upsert_jobs([entry])
-                time.sleep(0.3)
+            except Exception as e:
+                _log(f"[simplify] Error: {e}")
+
     finally:
+        now = datetime.now(timezone.utc).isoformat()
         discovery_status["running"] = False
-        discovery_status["last_run"] = datetime.now(timezone.utc).isoformat()
+        discovery_status["phase"] = ""
+        discovery_status["last_run"] = now
         discovery_status["new_jobs"] = total_new
+        # Persist so it survives server restarts
+        db.kv_set("discovery_last_run", now)
+        db.kv_set("discovery_new_jobs", str(total_new))
 
 
 @app.post("/api/discover")
@@ -597,7 +1050,7 @@ def trigger_discovery(body: DiscoverRequest, background_tasks: BackgroundTasks):
     if discovery_status["running"]:
         raise HTTPException(409, "Discovery already running")
     background_tasks.add_task(
-        _run_discovery, body.queries, body.location, body.skip_jsearch, body.skip_ats, body.freshness_hours, body.skip_adzuna,
+        _run_discovery, body.queries, body.location, body.skip_jsearch, body.skip_ats, body.freshness_hours, body.skip_adzuna, body.skip_simplify,
     )
     return {"status": "started"}
 
@@ -620,6 +1073,18 @@ def match_job(job_id: str):
     title = job.get("title", "")
     company = job.get("company", "")
 
+    # Auto-fetch JD if missing (e.g. Simplify jobs have no description)
+    if not jd.strip() and job.get("apply_link"):
+        _log(f"[match] No description for {company} — {title}, fetching from URL...")
+        fetched = _fetch_jd_from_url(job["apply_link"])
+        if fetched.get("description", "").strip():
+            jd = fetched["description"]
+            # Persist the fetched description so we don't need to re-fetch
+            db.update_job(job_id, description=jd)
+            _log(f"[match] Fetched JD ({len(jd)} chars) from {job['apply_link'][:60]}...")
+        else:
+            _log(f"[match] Could not fetch JD from {job['apply_link'][:60]}")
+
     recommended_resume, scores, matched_kw = get_resume_type(title, jd)
     resume_text = get_resume_text(recommended_resume)
 
@@ -632,7 +1097,9 @@ def match_job(job_id: str):
     skip, skip_reason = llm.hard_skip_check(title, jd, company)
     if skip:
         db.update_job(job_id, match_pct=0, match_summary=f"Auto-skipped: {skip_reason}",
-                      recommended_resume=recommended_resume)
+                      recommended_resume=recommended_resume,
+                      resume_scores=json.dumps(scores),
+                      matched_keywords=json.dumps({k: v[:5] for k, v in matched_kw.items()}))
         return {**base_result, "match_pct": 0, "summary": f"Auto-skipped: {skip_reason}",
                 "team": None, "project": None, "hard_skip": True, "skip_reason": skip_reason}
 
@@ -675,6 +1142,8 @@ def match_job(job_id: str):
         '  "sponsorship_available": <true if they explicitly say they sponsor visas, false ONLY if the JD text explicitly says they do NOT sponsor (e.g. "no visa sponsorship", "will not sponsor"). null if not mentioned. IMPORTANT: E-Verify statements are NOT "no sponsorship" — E-Verify is standard employment verification that all employers use, including those who sponsor visas. Do NOT guess based on company reputation or E-Verify.>,\n'
         '  "seniority_level": "<junior|mid|senior|staff|lead|principal|director>",\n'
         '  "is_ml_specialist_role": <true if the PRIMARY job function is ML model training/research/data science rather than software engineering>,\n'
+        '  "salary_min": <integer or null — lowest annual base salary in USD from the JD compensation range. Convert hourly to annual (×2080). null if not mentioned>,\n'
+        '  "salary_max": <integer or null — highest annual base salary in USD from the JD compensation range. null if not mentioned>,\n'
         '  "scam_flag": <true if fake/scam posting>\n'
         "}\n\n"
         "SCORING — USE THE FULL RANGE, DO NOT CLUSTER AROUND 60-75:\n"
@@ -729,7 +1198,7 @@ def match_job(job_id: str):
 
     result = llm.parse_json(raw)
     if not result:
-        print(f"[match] Failed to parse LLM response: {raw[:500]}")
+        _log(f"[match] Failed to parse LLM response: {raw[:500]}")
         raise HTTPException(502, f"Could not parse LLM response")
 
     # --- Hard enforcement caps (LLM may still be generous) ---
@@ -824,14 +1293,24 @@ def match_job(job_id: str):
         prefix = "[" + " | ".join(warnings) + "] "
         result["summary"] = prefix + result.get("summary", "")
 
-    db.update_job(
-        job_id,
+    scores_json = json.dumps(scores)
+    keywords_json = json.dumps({k: v[:5] for k, v in matched_kw.items()})
+    salary_min = result.get("salary_min")
+    salary_max = result.get("salary_max")
+    update_kwargs = dict(
         match_pct=result.get("match_pct"),
         match_summary=result.get("summary"),
         team=result.get("team"),
         project=result.get("project"),
         recommended_resume=recommended_resume,
+        resume_scores=scores_json,
+        matched_keywords=keywords_json,
     )
+    if salary_min is not None:
+        update_kwargs["salary_min"] = salary_min
+    if salary_max is not None:
+        update_kwargs["salary_max"] = salary_max
+    db.update_job(job_id, **update_kwargs)
     result["recommended_resume"] = recommended_resume
     result["resume_scores"] = scores
     result["matched_keywords"] = {k: v[:5] for k, v in matched_kw.items()}
@@ -888,7 +1367,10 @@ def generate_outreach(job_id: str, req: OutreachRequest = None):
         "- Built full stack apps, AI pipelines, distributed systems\n\n"
         "STRICT RULES:\n"
         "1. Generate TWO versions: a full message (150-250 words) and a short version (STRICTLY under 260 characters, leave room for salutations)\n"
-        "2. If no recruiter name provided, open with: Just wanted to put a face to my resume\n"
+        "2. SHORT VERSION OPENING (follow EXACTLY, do NOT add extra words before 'I applied'):\n"
+        "   With recruiter name: 'Hey [Name]! Wanted to put a face to my resume! I applied for the [role] role.'\n"
+        "   Without recruiter name: 'Hey! Wanted to put a face to my resume! I applied for the [role] role.'\n"
+        "   CRITICAL: Do NOT add the word 'just' anywhere. 'Just wanted' is BANNED. Write 'Wanted to' not 'Just wanted to'.\n"
         "3. Always mention that you applied\n"
         "4. Include a human touch and offer to share resume\n"
         "5. Reference something SPECIFIC from the JD or LinkedIn post\n"
@@ -937,9 +1419,14 @@ def generate_outreach(job_id: str, req: OutreachRequest = None):
     for key in ("full", "short"):
         result[key] = result[key].replace("—", " ").replace("–", " ").replace("-", " ")
 
+    # Strip "just" from short version opening — LLM keeps adding it despite instructions
+    import re
+    result["short"] = re.sub(r'^(Hey[^!]*!) *[Jj]ust wanted', r'\1 Wanted', result["short"])
+    result["short"] = re.sub(r'[Jj]ust wanted to put', 'Wanted to put', result["short"])
+
     # Log if short version exceeds target (LLM should handle length)
     if len(result["short"]) > 260:
-        print(f"[outreach] Short version is {len(result['short'])} chars (target: 260)")
+        _log(f"[outreach] Short version is {len(result['short'])} chars (target: 260)")
 
     # Persist to DB
     db.update_job(job_id, outreach_full=result["full"], outreach_short=result["short"])
@@ -999,20 +1486,52 @@ def linkedin_search(job_id: str):
 
     linkedin_id, verified = _get_linkedin_id(company)
 
-    # Simple "software recruiter" works best — team/title details just narrow results too much
+    # LinkedIn keyword search matches titles AND headlines/taglines
+    # Extract a short, clean role from the job title for "hiring <role>" matching
+    title = job.get("title", "")
+    role_hint = title.strip()
+    # Drop team/qualifier suffixes: "Engineer, Database" or "Engineer - Platform" or "Engineer (Cloud)"
+    role_hint = re.split(r'\s*[,(|\-–—]\s*', role_hint)[0].strip()
+    # Remove seniority prefixes
+    for prefix in ["Associate ", "Senior ", "Staff ", "Principal ", "Lead ", "Junior ", "Jr. ", "Sr. "]:
+        if role_hint.startswith(prefix):
+            role_hint = role_hint[len(prefix):].strip()
+            break
+    # Remove level suffixes: "Engineer 3", "Engineer II", "SDE III", "Developer I"
+    role_hint = re.sub(r'\s+[IVX]+$', '', role_hint)
+    role_hint = re.sub(r'\s+\d+$', '', role_hint)
+    # Normalize verbose titles to what recruiters actually write in their headlines
+    ROLE_NORMALIZE = {
+        "software development engineer": "software engineer",
+        "software dev engineer": "software engineer",
+        "sde": "software engineer",
+        "swe": "software engineer",
+    }
+    role_lower = role_hint.lower()
+    if role_lower in ROLE_NORMALIZE:
+        role_hint = ROLE_NORMALIZE[role_lower]
+    # Cap length — keep it short for LinkedIn
+    if len(role_hint) > 30:
+        role_hint = " ".join(role_hint.split()[:3])
+
+    # Use LinkedIn's title filter to restrict to recruiter-type roles
+    # This prevents matching random SWEs who have "technical" in their headline
+    title_filter = "recruiter OR talent acquisition OR sourcer"
+
     if linkedin_id and verified:
-        query = "software recruiter"
+        query = f'"hiring {role_hint}" OR recruiter OR "talent acquisition"'
     else:
-        query = f"{company} software recruiter"
+        query = f'{company} recruiter'
 
     url = "https://www.linkedin.com/search/results/people/?"
     url += f"keywords={urllib.parse.quote(query)}"
+    url += f"&titleFreeText={urllib.parse.quote(title_filter)}"
     url += f"&geoUrn=%5B%22103644278%22%5D"
     url += "&origin=FACETED_SEARCH"
     if linkedin_id and verified:
         url += f"&currentCompany=%5B%22{linkedin_id}%22%5D"
 
-    return {"url": url, "query": query, "company": company, "linkedin_id": linkedin_id, "verified": verified}
+    return {"url": url, "query": query, "title_filter": title_filter, "company": company, "linkedin_id": linkedin_id, "verified": verified}
 
 
 @app.get("/api/linkedin-id")
@@ -1046,7 +1565,7 @@ def update_linkedin_id(body: dict):
         if updated:
             companies_path.write_text(json.dumps(companies, indent=2))
     except Exception as e:
-        print(f"[linkedin-id] Failed to update companies.json: {e}")
+        _log(f"[linkedin-id] Failed to update companies.json: {e}")
 
     return {"ok": True, "company": company, "linkedin_id": lid}
 
@@ -1262,6 +1781,35 @@ def fix_workday_urls():
     companies = json.loads(Path("companies.json").read_text())
     fixed = db.fix_workday_urls(companies)
     return {"fixed": fixed}
+
+
+@app.post("/api/jobs/backfill-descriptions")
+def backfill_descriptions():
+    """Fetch JDs for jobs that have an apply_link but no description."""
+    with db.get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, apply_link FROM jobs WHERE (description IS NULL OR description = '') AND apply_link != ''"
+        ).fetchall()
+
+    filled = 0
+    errors = 0
+    for row in rows:
+        jid, url = row["id"], row["apply_link"]
+        try:
+            fetched = _fetch_jd_from_url(url)
+            desc = fetched.get("description", "").strip()
+            if desc:
+                db.update_job(jid, description=desc)
+                filled += 1
+                _log(f"[backfill] Filled {jid} ({len(desc)} chars)")
+            else:
+                _log(f"[backfill] No JD found for {jid}: {url[:60]}")
+        except Exception as e:
+            errors += 1
+            _log(f"[backfill] Error {jid}: {e}")
+
+    _log(f"[backfill] Done: {filled} filled, {errors} errors, {len(rows) - filled - errors} no JD found")
+    return {"total": len(rows), "filled": filled, "errors": errors}
 
 
 # ---------------------------------------------------------------------------
