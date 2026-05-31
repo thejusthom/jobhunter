@@ -193,7 +193,16 @@ export default function JobQueue() {
         try {
           const msg = await api.generateOutreach(job.id, {})
           setOutreach(msg)
-        } catch (_) { /* silent — outreach is bonus */ }
+        } catch (err) {
+          console.warn('[outreach] Generation failed:', err.message)
+          // Try loading from DB in case it was generated before
+          try {
+            const fresh = await api.getJob(job.id)
+            if (fresh.outreach_full && fresh.outreach_short) {
+              setOutreach({ full: fresh.outreach_full, short: fresh.outreach_short })
+            }
+          } catch (_) {}
+        }
         setOutreachLoading(false)
       }
     } catch (e) {
@@ -426,11 +435,20 @@ export default function JobQueue() {
               {jobs.map(job => (
                 <div
                   key={job.id}
-                  onClick={() => {
+                  onClick={async () => {
                     setSelected(job)
                     setMatchResult(null)
                     if (job.outreach_full && job.outreach_short) {
                       setOutreach({ full: job.outreach_full, short: job.outreach_short })
+                    } else if (job.match_pct != null) {
+                      // Job was matched but outreach missing from list — fetch full job
+                      setOutreach(null)
+                      try {
+                        const full = await api.getJob(job.id)
+                        if (full.outreach_full && full.outreach_short) {
+                          setOutreach({ full: full.outreach_full, short: full.outreach_short })
+                        }
+                      } catch (_) {}
                     } else {
                       setOutreach(null)
                     }
