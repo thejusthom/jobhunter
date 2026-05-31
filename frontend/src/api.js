@@ -34,6 +34,7 @@ export const api = {
   },
   getAppStats: () => request('/applications/stats'),
   createApplication: (data) => request('/applications', { method: 'POST', body: JSON.stringify(data) }),
+  addApplicationByUrl: (url) => request('/applications/add-by-url', { method: 'POST', body: JSON.stringify({ url }) }),
   updateApplication: (id, data) => request(`/applications/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
 
   getRecruiters: (appId) => request(`/recruiters${appId ? '?application_id=' + appId : ''}`),
