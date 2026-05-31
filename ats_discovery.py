@@ -1,7 +1,7 @@
 """
 ATS Discovery Module
 Queries Greenhouse, Lever, Ashby, Amazon, Apple, Workday, Pinpoint,
-SmartRecruiters, Oracle Cloud HCM, and LinkedIn public APIs.
+SmartRecruiters, Oracle Cloud HCM, LinkedIn, and SimplifyJobs GitHub APIs.
 No API key required — these are open public endpoints.
 Filters to US-based jobs only.
 """
@@ -14,6 +14,11 @@ import hashlib
 import requests
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+
+
+def _log(msg: str):
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"[{ts}] {msg}")
 
 from discovery import (
     load_json, save_json, is_blacklisted, score_job,
@@ -58,8 +63,10 @@ NON_US_CITIES = [
 
 
 def _strip_html(text: str) -> str:
-    cleaned = re.sub(r"<[^>]+>", " ", text or "")
-    return html.unescape(cleaned).strip()
+    # Unescape HTML entities first (e.g. &lt;div&gt; -> <div>), then strip tags
+    unescaped = html.unescape(text or "")
+    cleaned = re.sub(r"<[^>]+>", " ", unescaped)
+    return cleaned.strip()
 
 
 def _is_fresh(dt: datetime, days: int = FRESHNESS_DAYS, hours: int | None = None) -> bool:
@@ -155,14 +162,14 @@ def _is_us_location(location: str) -> bool:
 def fetch_greenhouse(slug: str, company_name: str) -> list:
     url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
     try:
-        resp = requests.get(url, timeout=15)
+        resp = requests.get(url, timeout=8)
         if resp.status_code == 404:
-            print(f"[ats] Greenhouse '{slug}' not found — check the slug")
+            _log(f"[ats] Greenhouse '{slug}' not found — check the slug")
             return []
         resp.raise_for_status()
         jobs = resp.json().get("jobs", [])
     except Exception as e:
-        print(f"[ats] Greenhouse {slug} failed: {e}")
+        _log(f"[ats] Greenhouse {slug} failed: {e}")
         return []
 
     results = []
@@ -203,14 +210,14 @@ def fetch_greenhouse(slug: str, company_name: str) -> list:
 def fetch_lever(slug: str, company_name: str) -> list:
     url = f"https://api.lever.co/v0/postings/{slug}?mode=json"
     try:
-        resp = requests.get(url, timeout=15)
+        resp = requests.get(url, timeout=8)
         if resp.status_code == 404:
-            print(f"[ats] Lever '{slug}' not found — check the slug")
+            _log(f"[ats] Lever '{slug}' not found — check the slug")
             return []
         resp.raise_for_status()
         postings = resp.json()
     except Exception as e:
-        print(f"[ats] Lever {slug} failed: {e}")
+        _log(f"[ats] Lever {slug} failed: {e}")
         return []
 
     results = []
@@ -253,46 +260,56 @@ def fetch_lever(slug: str, company_name: str) -> list:
 # ---------------------------------------------------------------------------
 
 def fetch_ashby(slug: str, company_name: str) -> list:
-    url = f"https://api.ashbyhq.com/posting-api/job-board/{slug}"
+    """Use Ashby's public GraphQL endpoint (the old /posting-api is dead)."""
+    gql_url = "https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobBoardWithTeams"
+    query = (
+        "query ApiJobBoardWithTeams($organizationHostedJobsPageName: String!) { "
+        "jobBoard: jobBoardWithTeams(organizationHostedJobsPageName: $organizationHostedJobsPageName) { "
+        "jobPostings { id title locationName employmentType secondaryLocations { locationName } } } }"
+    )
+    body = {
+        "operationName": "ApiJobBoardWithTeams",
+        "variables": {"organizationHostedJobsPageName": slug},
+        "query": query,
+    }
     try:
-        resp = requests.get(url, timeout=15)
-        if resp.status_code == 404:
-            print(f"[ats] Ashby '{slug}' not found — check the slug")
+        resp = requests.post(gql_url, json=body, timeout=8, headers={"Content-Type": "application/json"})
+        if resp.status_code != 200:
+            _log(f"[ats] Ashby '{slug}' returned {resp.status_code}")
             return []
-        resp.raise_for_status()
-        jobs = resp.json().get("jobs", [])
+        data = resp.json().get("data", {})
+        board = data.get("jobBoard")
+        if not board:
+            _log(f"[ats] Ashby '{slug}' not found")
+            return []
+        jobs = board.get("jobPostings", []) or []
     except Exception as e:
-        print(f"[ats] Ashby {slug} failed: {e}")
+        _log(f"[ats] Ashby {slug} failed: {e}")
         return []
 
     results = []
     for j in jobs:
-        updated_str = j.get("updatedAt", "") or j.get("publishedAt", "")
-        try:
-            dt = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
-            if not _is_fresh(dt):
-                continue
-        except (ValueError, TypeError):
-            pass
-
-        loc = j.get("location", "") or ""
-        if isinstance(loc, dict):
-            loc = loc.get("name", "")
-        if not _is_us_location(loc):
+        loc = j.get("locationName", "") or ""
+        # Aggregate secondary locations into the check too
+        secondary = " ".join(s.get("locationName", "") for s in (j.get("secondaryLocations") or []))
+        loc_for_filter = (loc + " " + secondary).strip()
+        if not _is_us_location(loc_for_filter):
             continue
 
-        description = _strip_html(j.get("descriptionHtml", "") or j.get("descriptionPlain", ""))
-        apply_url = j.get("jobUrl", "") or f"https://jobs.ashbyhq.com/{slug}/{j.get('id', '')}"
+        job_id = j.get("id", "")
+        apply_url = f"https://jobs.ashbyhq.com/{slug}/{job_id}"
 
+        # Skip per-job description fetch in bulk discovery — it would add ~50 extra requests.
+        # Description can be fetched on-demand via _fetch_jd_from_url(apply_url).
         results.append({
             "employer_name": company_name,
             "job_title": j.get("title", ""),
-            "job_description": description,
+            "job_description": "",
             "job_apply_link": apply_url,
             "job_city": loc,
             "job_country": "US",
             "job_apply_is_direct": True,
-            "job_posted_at_datetime_utc": updated_str,
+            "job_posted_at_datetime_utc": "",
             "_ats": "ashby",
         })
     return results
@@ -324,7 +341,7 @@ def fetch_amazon(company_name: str = "Amazon") -> list:
             if not jobs:
                 break
         except Exception as e:
-            print(f"[ats] Amazon page {offset} failed: {e}")
+            _log(f"[ats] Amazon page {offset} failed: {e}")
             break
 
         for j in jobs:
@@ -414,12 +431,12 @@ def fetch_apple(company_name: str = "Apple") -> list:
             p = {**params, "page": str(page_num)} if page_num > 1 else params
             resp = requests.get(base, params=p, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
             if resp.status_code != 200:
-                print(f"[ats] Apple page {page_num} HTTP {resp.status_code}")
+                _log(f"[ats] Apple page {page_num} HTTP {resp.status_code}")
                 break
 
             data = _parse_apple_ssr(resp.text)
             if not data:
-                print(f"[ats] Apple page {page_num}: no SSR data")
+                _log(f"[ats] Apple page {page_num}: no SSR data")
                 break
 
             search = data.get("loaderData", {}).get("search", {})
@@ -427,7 +444,7 @@ def fetch_apple(company_name: str = "Apple") -> list:
             if not postings:
                 break
         except Exception as e:
-            print(f"[ats] Apple page {page_num} failed: {e}")
+            _log(f"[ats] Apple page {page_num} failed: {e}")
             break
 
         for j in postings:
@@ -497,6 +514,121 @@ def fetch_apple(company_name: str = "Apple") -> list:
 
 
 # ---------------------------------------------------------------------------
+# SimplifyJobs GitHub — New-Grad-Positions repo
+# ---------------------------------------------------------------------------
+
+SIMPLIFY_URL = "https://raw.githubusercontent.com/SimplifyJobs/New-Grad-Positions/dev/.github/scripts/listings.json"
+
+# US state abbreviations for location filtering
+_US_STATES = {
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC",
+}
+
+
+def _is_us_location_simplify(loc: str) -> bool:
+    """Check if a Simplify listing location is US-based (allowlist approach)."""
+    loc_upper = loc.upper().strip()
+    if any(kw in loc_upper for kw in ["UNITED STATES", "USA", "U.S."]):
+        return True
+    # "Remote" alone counts as US for simplify (they're tagged US separately)
+    if loc_upper == "REMOTE":
+        return True
+    # Check for ", XX" state abbreviation at end
+    parts = loc.split(",")
+    if len(parts) >= 2:
+        state = parts[-1].strip().upper()
+        if state in _US_STATES:
+            return True
+    return False
+
+
+def fetch_simplify_github(freshness_days: int = None) -> list:
+    """Fetch new-grad SWE jobs from SimplifyJobs GitHub repo."""
+    if freshness_days is None:
+        freshness_days = FRESHNESS_DAYS
+
+    try:
+        resp = requests.get(SIMPLIFY_URL, timeout=30)
+        resp.raise_for_status()
+        listings = resp.json()
+    except Exception as e:
+        _log(f"[simplify] Failed to fetch listings: {e}")
+        return []
+
+    _log(f"[simplify] Loaded {len(listings)} total listings")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=freshness_days)
+    results = []
+
+    swe_categories = {"software", "software engineering"}
+
+    for job in listings:
+        # Skip inactive / hidden
+        if not job.get("active", False):
+            continue
+
+        # Only Software Engineering roles
+        category = (job.get("category") or "").lower()
+        if category not in swe_categories:
+            continue
+
+        # Sponsorship filter — skip jobs that explicitly require US citizenship
+        sponsorship = (job.get("sponsorship") or "").lower()
+        if "u.s. citizen" in sponsorship or "citizenship" in sponsorship:
+            continue
+
+        # Freshness check
+        date_posted = job.get("date_posted", 0)
+        if date_posted:
+            try:
+                dt = datetime.fromtimestamp(date_posted, tz=timezone.utc)
+                if dt < cutoff:
+                    continue
+            except (ValueError, TypeError, OSError):
+                continue
+
+        # US location filter
+        locations = job.get("locations", [])
+        us_locs = [loc for loc in locations if _is_us_location_simplify(loc)]
+        if not us_locs:
+            continue
+
+        url = job.get("url", "")
+        if not url:
+            continue
+
+        title = job.get("title", "")
+        company = job.get("company_name", "")
+
+        posted_iso = ""
+        if date_posted:
+            try:
+                posted_iso = datetime.fromtimestamp(date_posted, tz=timezone.utc).isoformat()
+            except (ValueError, TypeError, OSError):
+                pass
+
+        results.append({
+            "employer_name": company,
+            "job_title": title,
+            "job_description": "",  # No description in the JSON — will be fetched on match
+            "job_apply_link": url,
+            "job_city": ", ".join(us_locs[:3]),
+            "job_country": "US",
+            "job_apply_is_direct": True,
+            "job_posted_at_datetime_utc": posted_iso,
+            "_ats": "simplify",
+            "_sponsorship": job.get("sponsorship", ""),
+        })
+
+    _log(f"[simplify] {len(results)} active US jobs within {freshness_days}d")
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Workday — fixed URL: use /en-US/{site}/job/ path
 # ---------------------------------------------------------------------------
 
@@ -510,12 +642,12 @@ def fetch_workday(slug: str, company_name: str, wd_num: int = 5, site: str = "")
             timeout=15,
         )
         if resp.status_code != 200:
-            print(f"[ats] Workday {company_name} failed: HTTP {resp.status_code}")
+            _log(f"[ats] Workday {company_name} failed: HTTP {resp.status_code}")
             return []
         data = resp.json()
         postings = data.get("jobPostings", [])
     except Exception as e:
-        print(f"[ats] Workday {company_name} failed: {e}")
+        _log(f"[ats] Workday {company_name} failed: {e}")
         return []
 
     results = []
@@ -601,7 +733,7 @@ def fetch_pinpoint(slug: str, company_name: str) -> list:
     try:
         resp = requests.get(url, timeout=15)
         if resp.status_code == 404:
-            print(f"[ats] Pinpoint '{slug}' not found — check the slug")
+            _log(f"[ats] Pinpoint '{slug}' not found — check the slug")
             return []
         resp.raise_for_status()
         data = resp.json()
@@ -609,7 +741,7 @@ def fetch_pinpoint(slug: str, company_name: str) -> list:
         if not isinstance(postings, list):
             postings = []
     except Exception as e:
-        print(f"[ats] Pinpoint {slug} failed: {e}")
+        _log(f"[ats] Pinpoint {slug} failed: {e}")
         return []
 
     results = []
@@ -656,16 +788,22 @@ def fetch_pinpoint(slug: str, company_name: str) -> list:
 # Oracle Cloud HCM — public REST API
 # ---------------------------------------------------------------------------
 
-def fetch_oracle_hcm(slug: str, company_name: str, site: str = "CX_1001") -> list:
+def fetch_oracle_hcm(slug: str, company_name: str, site: str = "CX_1001", oracle_suffix: str = "") -> list:
     """Fetch jobs from Oracle Cloud HCM public REST API.
     slug = subdomain prefix, e.g. 'jpmc' for jpmc.fa.oraclecloud.com
     site = site number, e.g. 'CX_1001'
+    oracle_suffix = explicit suffix override, e.g. '.fa.ocs.oraclecloud.com'
     """
-    # Determine base URL — some use .fa.oraclecloud.com, some .fa.us2.oraclecloud.com
-    base_urls = [
-        f"https://{slug}.fa.oraclecloud.com",
-        f"https://{slug}.fa.us2.oraclecloud.com",
-    ]
+    # Determine base URL — some use .fa.oraclecloud.com, some .fa.us2.oraclecloud.com, some .fa.ocs.oraclecloud.com
+    if oracle_suffix:
+        base_urls = [f"https://{slug}{oracle_suffix}"]
+    else:
+        base_urls = [
+            f"https://{slug}.fa.oraclecloud.com",
+            f"https://{slug}.fa.us2.oraclecloud.com",
+            f"https://{slug}.fa.us6.oraclecloud.com",
+            f"https://{slug}.fa.ocs.oraclecloud.com",
+        ]
 
     data = None
     base_url = None
@@ -688,7 +826,7 @@ def fetch_oracle_hcm(slug: str, company_name: str, site: str = "CX_1001") -> lis
             continue
 
     if not data or not base_url:
-        print(f"[ats] Oracle HCM {company_name}: no accessible API endpoint found")
+        _log(f"[ats] Oracle HCM {company_name}: no accessible API endpoint found")
         return []
 
     item = data["items"][0]
@@ -756,14 +894,14 @@ def fetch_smartrecruiters(slug: str, company_name: str) -> list:
         try:
             resp = requests.get(url, params={"offset": offset, "limit": limit}, timeout=15)
             if resp.status_code != 200:
-                print(f"[ats] SmartRecruiters {company_name} failed: HTTP {resp.status_code}")
+                _log(f"[ats] SmartRecruiters {company_name} failed: HTTP {resp.status_code}")
                 break
             data = resp.json()
             postings = data.get("content", [])
             if not postings:
                 break
         except Exception as e:
-            print(f"[ats] SmartRecruiters {company_name} failed: {e}")
+            _log(f"[ats] SmartRecruiters {company_name} failed: {e}")
             break
 
         for j in postings:
@@ -915,7 +1053,7 @@ def fetch_linkedin(linkedin_id: str, company_name: str) -> list:
         if resp.status_code != 200:
             return []
     except Exception as e:
-        print(f"[ats] LinkedIn search failed for {company_name}: {e}")
+        _log(f"[ats] LinkedIn search failed for {company_name}: {e}")
         return []
 
     cards = _parse_linkedin_cards(resp.text)
@@ -1003,7 +1141,7 @@ def fetch_jsearch_company(company_name: str) -> list:
         resp.raise_for_status()
         data = resp.json().get("data", {}).get("jobs", [])
     except Exception as e:
-        print(f"[ats] JSearch fallback for {company_name} failed: {e}")
+        _log(f"[ats] JSearch fallback for {company_name} failed: {e}")
         return []
 
     results = []
@@ -1046,37 +1184,22 @@ def fetch_jsearch_company(company_name: str) -> list:
 # Main
 # ---------------------------------------------------------------------------
 
-def discover_from_ats(companies_path: str = None) -> list:
-    companies = load_json(Path(companies_path or COMPANIES_PATH))
-    if not companies:
-        print("[ats] companies.json is empty — add companies to enable ATS discovery")
-        return []
+def _fetch_company_jobs(company: dict) -> tuple:
+    """Fetch raw jobs for a single company. Returns (company, raw_jobs)."""
+    name = company.get("name", "")
+    ats = (company.get("ats") or "").lower()
+    slug = company.get("slug", "")
 
-    blacklist = load_json(BLACKLIST_PATH)
-    applied_log = load_json(LOG_PATH)
-    queue = load_json(QUEUE_PATH)
-    existing_ids = {entry.get("id") for entry in queue}
+    if not name:
+        return (company, [])
+    if ats == "linkedin":
+        linkedin_id = company.get("linkedin_id", "")
+        if not linkedin_id:
+            return (company, [])
+    elif not ats or not slug:
+        return (company, [])
 
-    new_entries = []
-
-    for company in companies:
-        name = company.get("name", "")
-        ats = (company.get("ats") or "").lower()
-        slug = company.get("slug", "")
-
-        # Skip companies with no name
-        if not name:
-            continue
-        # LinkedIn companies use linkedin_id instead of slug
-        if ats == "linkedin":
-            linkedin_id = company.get("linkedin_id", "")
-            if not linkedin_id:
-                continue
-        elif not ats or not slug:
-            continue
-
-        print(f"[ats] {name} ({ats})")
-
+    try:
         if ats == "greenhouse":
             raw_jobs = fetch_greenhouse(slug, name)
         elif ats == "lever":
@@ -1097,20 +1220,60 @@ def discover_from_ats(companies_path: str = None) -> list:
             raw_jobs = fetch_smartrecruiters(slug, name)
         elif ats == "oracle_hcm":
             site = company.get("site", "CX_1001")
-            raw_jobs = fetch_oracle_hcm(slug, name, site)
+            oracle_suffix = company.get("oracle_suffix", "")
+            raw_jobs = fetch_oracle_hcm(slug, name, site, oracle_suffix)
         elif ats == "linkedin":
             linkedin_id = company.get("linkedin_id", "")
             raw_jobs = fetch_linkedin(linkedin_id, name)
         else:
-            print(f"[ats] Unknown ATS type '{ats}' for {name} — skipping")
-            continue
+            _log(f"[ats] Unknown ATS type '{ats}' for {name} — skipping")
+            return (company, [])
+    except Exception as e:
+        _log(f"[ats] {name} ({ats}) crashed: {e}")
+        return (company, [])
+
+    return (company, raw_jobs)
+
+
+def discover_from_ats(companies_path: str = None) -> list:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    companies = load_json(Path(companies_path or COMPANIES_PATH))
+    if not companies:
+        print("[ats] companies.json is empty — add companies to enable ATS discovery")
+        return []
+
+    blacklist = load_json(BLACKLIST_PATH)
+    applied_log = load_json(LOG_PATH)
+    queue = load_json(QUEUE_PATH)
+    existing_ids = {entry.get("id") for entry in queue}
+
+    new_entries = []
+    fetch_start = time.time()
+
+    # Phase 1: parallel fetch all companies (network-bound; safe to thread)
+    company_results = []
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        futures = {executor.submit(_fetch_company_jobs, c): c for c in companies}
+        for fut in as_completed(futures):
+            try:
+                company_results.append(fut.result())
+            except Exception as e:
+                comp = futures[fut]
+                _log(f"[ats] {comp.get('name','?')} future crashed: {e}")
+
+    _log(f"[ats] Parallel fetch done in {time.time()-fetch_start:.1f}s — processing results...")
+
+    # Phase 2: sequential dedup/score/queue
+    for company, raw_jobs in company_results:
+        name = company.get("name", "")
+        ats = (company.get("ats") or "").lower()
 
         fresh = len(raw_jobs)
         if fresh == 0:
-            time.sleep(0.2)
             continue
 
-        print(f"[ats] {name}: {fresh} fresh US postings")
+        _log(f"[ats] {name}: {fresh} fresh US postings")
 
         for job in raw_jobs:
             jid = _job_id(
@@ -1152,9 +1315,7 @@ def discover_from_ats(companies_path: str = None) -> list:
 
             new_entries.append(entry)
             existing_ids.add(jid)
-            print(f"[ats] Queued ({score}) [{ats}]: {name} — {entry['title']}")
-
-        time.sleep(0.3)
+            _log(f"[ats] Queued ({score}) [{ats}]: {name} — {entry['title']}")
 
     queue.extend(new_entries)
     save_json(QUEUE_PATH, queue)

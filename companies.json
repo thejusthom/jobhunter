@@ -241,7 +241,8 @@
   {
     "name": "GitLab",
     "ats": "greenhouse",
-    "slug": "gitlab"
+    "slug": "gitlab",
+    "linkedin_id": "5101804"
   },
   {
     "name": "Toast",
@@ -302,7 +303,8 @@
   {
     "name": "Snorkel AI",
     "ats": "greenhouse",
-    "slug": "snorkelai"
+    "slug": "snorkelai",
+    "linkedin_id": "68302528"
   },
   {
     "name": "Together AI",
@@ -937,8 +939,8 @@
   },
   {
     "name": "Fidelity",
-    "ats": "lever",
-    "slug": "fidelity",
+    "ats": "linkedin",
+    "slug": "",
     "linkedin_id": "4994"
   },
   {
@@ -960,6 +962,14 @@
     "slug": "jpmc",
     "linkedin_id": "1068",
     "site": "CX_1001"
+  },
+  {
+    "name": "Dell",
+    "ats": "oracle_hcm",
+    "slug": "iawmqy",
+    "linkedin_id": "1093",
+    "site": "careers",
+    "oracle_suffix": ".fa.ocs.oraclecloud.com"
   },
   {
     "name": "Goldman Sachs",
@@ -1041,10 +1051,9 @@
   },
   {
     "name": "BNY Mellon",
-    "ats": "oracle_hcm",
-    "slug": "eofe",
-    "linkedin_id": "1432",
-    "site": "CX_1001"
+    "ats": "linkedin",
+    "slug": "",
+    "linkedin_id": "1432"
   },
   {
     "name": "Deloitte",
@@ -1172,7 +1181,7 @@
     "name": "Atlassian",
     "ats": "linkedin",
     "slug": "",
-    "linkedin_id": "20708"
+    "linkedin_id": "1110"
   },
   {
     "name": "Two Sigma",
@@ -1255,7 +1264,7 @@
     "name": "Box",
     "ats": "greenhouse",
     "slug": "boxinc",
-    "linkedin_id": "15892"
+    "linkedin_id": "54178"
   },
   {
     "name": "Temporal",
@@ -1266,7 +1275,7 @@
     "name": "Compass",
     "ats": "greenhouse",
     "slug": "urbancompass",
-    "linkedin_id": "4994301"
+    "linkedin_id": "2866215"
   },
   {
     "name": "Glean",
@@ -1327,7 +1336,8 @@
     "ats": "oracle_hcm",
     "slug": "eeho",
     "linkedin_id": "1028",
-    "site": "jobsearch"
+    "site": "CX_45001",
+    "oracle_suffix": ".fa.us2.oraclecloud.com"
   },
   {
     "name": "Cisco",
@@ -1440,13 +1450,14 @@
     "ats": "oracle_hcm",
     "slug": "edel",
     "linkedin_id": "20826",
-    "site": "CX_2001"
+    "site": "CX_2001",
+    "oracle_suffix": ".fa.us2.oraclecloud.com"
   },
   {
     "name": "RingCentral",
     "ats": "workday",
     "slug": "ringcentral",
-    "linkedin_id": "15115",
+    "linkedin_id": "60868",
     "wd_num": 1,
     "site": "RingCentral_Careers"
   },
@@ -1454,7 +1465,7 @@
     "name": "Zoom",
     "ats": "workday",
     "slug": "zoom",
-    "linkedin_id": "11065158",
+    "linkedin_id": "2532259",
     "wd_num": 5,
     "site": "Zoom"
   },
@@ -1548,7 +1559,7 @@
     "name": "DigitalOcean",
     "ats": "greenhouse",
     "slug": "digitalocean98",
-    "linkedin_id": "3076372"
+    "linkedin_id": "2601253"
   },
   {
     "name": "Niantic",
