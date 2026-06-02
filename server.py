@@ -1554,17 +1554,34 @@ def _save_linkedin_overrides(data: dict):
     LINKEDIN_OVERRIDES_PATH.write_text(json.dumps(data, indent=2))
 
 
+def _normalize_company(name: str) -> str:
+    """Normalize company name for matching — strips suffixes like Inc., Corp., etc."""
+    key = name.lower().strip()
+    # Remove common suffixes
+    key = re.sub(r',?\s*(inc\.?|corp\.?|corporation|llc|ltd\.?|co\.?|technologies|technology|software|systems|group|holdings)$', '', key).strip()
+    # Remove trailing punctuation
+    key = key.rstrip('.,')
+    return key
+
+
 def _get_linkedin_id(company: str) -> tuple[str | None, bool]:
     """Returns (linkedin_id, is_verified). Checks overrides first, then companies.json."""
     overrides = _load_linkedin_overrides()
     key = company.lower().strip()
+    normalized = _normalize_company(company)
+
+    # Exact match first, then normalized match
     if key in overrides:
         return overrides[key], True
+    for okey, oval in overrides.items():
+        if _normalize_company(okey) == normalized:
+            return oval, True
 
     try:
         companies = json.loads(Path("companies.json").read_text())
         for c in companies:
-            if c.get("name", "").lower() == key and c.get("linkedin_id"):
+            cname = c.get("name", "").lower()
+            if (cname == key or _normalize_company(cname) == normalized) and c.get("linkedin_id"):
                 return c["linkedin_id"], False
     except Exception:
         pass
@@ -1644,7 +1661,11 @@ def update_linkedin_id(body: dict):
     if not company or not lid:
         raise HTTPException(400, "company and linkedin_id required")
     overrides = _load_linkedin_overrides()
+    # Store under both exact and normalized keys for reliable lookups
     overrides[company.lower()] = lid
+    normalized = _normalize_company(company)
+    if normalized != company.lower():
+        overrides[normalized] = lid
     _save_linkedin_overrides(overrides)
 
     # Also update companies.json if the company exists there
@@ -1653,7 +1674,7 @@ def update_linkedin_id(body: dict):
         companies = json.loads(companies_path.read_text())
         updated = False
         for c in companies:
-            if c.get("name", "").lower() == company.lower():
+            if c.get("name", "").lower() == company.lower() or _normalize_company(c.get("name", "")) == normalized:
                 c["linkedin_id"] = lid
                 updated = True
                 break
