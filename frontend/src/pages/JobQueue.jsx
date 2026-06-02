@@ -248,6 +248,8 @@ export default function JobQueue() {
   const [reminderSet, setReminderSet] = useState(null)
   const [showReminderForm, setShowReminderForm] = useState(false)
   const [reminderForm, setReminderForm] = useState({ title: '', date: '', time: '10:00' })
+  const [showPasteJd, setShowPasteJd] = useState(false)
+  const [pasteJdText, setPasteJdText] = useState('')
 
   const openReminderForm = (job) => {
     const tomorrow = new Date()
@@ -272,6 +274,18 @@ export default function JobQueue() {
       setShowReminderForm(false)
       setReminderSet(job.id)
       setTimeout(() => setReminderSet(null), 3000)
+    } catch (e) {
+      alert(e.message)
+    }
+  }
+
+  const handlePasteJd = async (job) => {
+    if (!pasteJdText.trim()) return
+    try {
+      await api.updateJob(job.id, { description: pasteJdText.trim() })
+      setSelected(prev => ({ ...prev, description: pasteJdText.trim() }))
+      setShowPasteJd(false)
+      setPasteJdText('')
     } catch (e) {
       alert(e.message)
     }
@@ -379,6 +393,8 @@ export default function JobQueue() {
     setOutreach(null)
     setMatchResult(null)
     setShowReminderForm(false)
+    setShowPasteJd(false)
+    setPasteJdText('')
   }
 
   return (
@@ -527,6 +543,7 @@ export default function JobQueue() {
                     setSelected(job)
                     setMatchResult(null)
                     setShowReminderForm(false)
+                    setShowPasteJd(false)
                     if (job.outreach_full && job.outreach_short) {
                       setOutreach({ full: job.outreach_full, short: job.outreach_short })
                     } else if (job.match_pct != null) {
@@ -741,6 +758,14 @@ export default function JobQueue() {
                   }`}>
                   {reminderSet === selected.id ? '✓ Reminder Set' : showReminderForm ? 'Cancel' : 'Set Reminder'}
                 </button>
+                {!selected.description && (
+                  <button onClick={() => { setShowPasteJd(!showPasteJd); setPasteJdText('') }}
+                    className={`text-[11px] sm:text-xs px-2.5 sm:px-3 py-1.5 rounded-md transition-all duration-300 border btn-press ${
+                      showPasteJd ? 'bg-blue-900/20 text-blue-400 border-blue-500/30' : 'bg-blue-900/10 text-blue-400/70 hover:text-blue-400 border-blue-500/15'
+                    }`}>
+                    {showPasteJd ? 'Cancel' : 'Paste JD'}
+                  </button>
+                )}
               </div>
 
               {/* Inline reminder form */}
@@ -770,6 +795,25 @@ export default function JobQueue() {
                       className="text-xs px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-md transition-all shrink-0"
                     >Save</button>
                   </div>
+                </div>
+              )}
+
+              {/* Paste JD form */}
+              {showPasteJd && (
+                <div className="bg-blue-900/10 border border-blue-500/20 rounded-lg p-3 animate-fade-in">
+                  <p className="text-xs text-blue-400/70 mb-2">This ATS requires JS rendering. Copy the JD from the job page and paste it here:</p>
+                  <textarea
+                    value={pasteJdText}
+                    onChange={e => setPasteJdText(e.target.value)}
+                    className="w-full text-xs bg-surface border border-border rounded-md px-2.5 py-2 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-blue-500/40 mb-2"
+                    placeholder="Paste job description here..."
+                    rows={5}
+                  />
+                  <button
+                    onClick={() => handlePasteJd(selected)}
+                    disabled={!pasteJdText.trim()}
+                    className="w-full text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-md transition-all"
+                  >Save Description</button>
                 </div>
               )}
             </div>

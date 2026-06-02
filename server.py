@@ -57,6 +57,7 @@ app.add_middleware(
 class JobUpdate(BaseModel):
     status: str | None = None
     notes: str | None = None
+    description: str | None = None
     match_pct: float | None = None
     match_summary: str | None = None
     team: str | None = None
@@ -460,6 +461,24 @@ def _fetch_jd_from_url(url: str) -> dict:
                             return result
             except Exception as e:
                 _log(f"[fetch-jd] Apple SSR error: {e}")
+
+        # --- Taleo (taleo.net) — JS-rendered, cannot scrape ---
+        if "taleo.net" in url:
+            _log(f"[fetch-jd] Taleo URL detected — content is JS-rendered, scraping not possible")
+            r = http_requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"}, allow_redirects=True)
+            if r.status_code == 200:
+                og_title = re.search(r'property="og:title"\s+content="([^"]+)"', r.text, re.I)
+                og_site = re.search(r'property="og:site_name"\s+content="([^"]+)"', r.text, re.I)
+                if og_title:
+                    result["title"] = html.unescape(og_title.group(1).strip())
+                if og_site:
+                    result["company"] = og_site.group(1).strip()
+                if not result["title"]:
+                    title_m = re.search(r"<title[^>]*>([^<]+)</title>", r.text, re.I)
+                    if title_m:
+                        result["title"] = title_m.group(1).strip()
+                result["ats"] = "taleo"
+            return result
 
         # --- Fallback: scrape page for text ---
         r = http_requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"}, allow_redirects=True)
