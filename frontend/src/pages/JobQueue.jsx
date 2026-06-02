@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import LinkedInIdEditor from '../components/LinkedInIdEditor'
 
@@ -52,10 +53,11 @@ const _badgeStyle = (colorObj) => colorObj ? {
 const PAGE_SIZE = 25
 
 export default function JobQueue() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [jobs, setJobs] = useState([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
-  const [filter, setFilter] = useState('pending')
+  const [filter, setFilter] = useState(searchParams.get('select') ? '' : 'pending')
   const [selected, setSelected] = useState(null)
   const [matching, setMatching] = useState(null)
   const [matchResult, setMatchResult] = useState(null)
@@ -65,6 +67,7 @@ export default function JobQueue() {
   const [followUp, setFollowUp] = useState(null)
   const [search, setSearch] = useState('')
   const [searchDebounced, setSearchDebounced] = useState('')
+  const listRef = useRef(null)
 
   // Debounce search input
   useEffect(() => {
@@ -75,7 +78,8 @@ export default function JobQueue() {
     return () => clearTimeout(t)
   }, [search])
 
-  const load = useCallback(() => {
+  const load = useCallback((preserveScroll = false) => {
+    const scrollTop = preserveScroll && listRef.current ? listRef.current.scrollTop : null
     setLoading(true)
     const params = { limit: PAGE_SIZE, offset: page * PAGE_SIZE }
     if (filter) params.status = filter
@@ -83,10 +87,37 @@ export default function JobQueue() {
     api.getJobs(params).then(data => {
       setJobs(data.jobs || [])
       setTotal(data.total || 0)
+      // Restore scroll position after React re-renders
+      if (scrollTop != null) {
+        requestAnimationFrame(() => {
+          if (listRef.current) listRef.current.scrollTop = scrollTop
+        })
+      }
     }).finally(() => setLoading(false))
   }, [filter, page, searchDebounced])
 
   useEffect(() => { load() }, [load])
+
+  // Auto-select job from ?select=JOB_ID query param (e.g. from Reminders page)
+  useEffect(() => {
+    const selectId = searchParams.get('select')
+    if (selectId && !selected) {
+      // Try to find in current page
+      const found = jobs.find(j => j.id === selectId)
+      if (found) {
+        setSelected(found)
+        setSearchParams({}, { replace: true }) // clear param
+      } else if (jobs.length > 0) {
+        // Job not in current page — fetch it directly
+        api.getJob(selectId).then(job => {
+          if (job) {
+            setSelected(job)
+            setSearchParams({}, { replace: true })
+          }
+        }).catch(() => {})
+      }
+    }
+  }, [jobs, searchParams])
 
   const changeFilter = (f) => {
     setFilter(f)
@@ -139,7 +170,7 @@ export default function JobQueue() {
     if (selected?.id === target.id) {
       selectNextJob(target.id)
     }
-    load()
+    load(true)
   }
 
   const handleSkipJob = async (reason, job = null) => {
@@ -150,7 +181,7 @@ export default function JobQueue() {
     if (selected?.id === target.id) {
       selectNextJob(target.id)
     }
-    load()
+    load(true)
   }
 
   const handleBlockCompany = async (reason, job = null) => {
@@ -161,7 +192,7 @@ export default function JobQueue() {
     if (selected?.id === target.id) {
       selectNextJob(target.id)
     }
-    load()
+    load(true)
   }
 
   const handleMatch = async (job) => {
@@ -181,7 +212,7 @@ export default function JobQueue() {
         salary_min: result.salary_min,
         salary_max: result.salary_max,
       })
-      load()
+      load(true)
       // Auto-generate outreach messages after match
       // Re-fetch job to get server-side updates (e.g. JD fetched for Simplify jobs)
       const updatedJob = await api.getJob(job.id)
@@ -306,7 +337,7 @@ export default function JobQueue() {
     }
 
     setBatchMatching(false)
-    load()
+    load(true)
   }
 
   const closeDetail = () => {
@@ -431,7 +462,7 @@ export default function JobQueue() {
         ) : (
           <>
             <div className="text-xs text-text-muted mb-2 animate-fade-in">{total} jobs</div>
-            <div className="space-y-1.5 overflow-y-auto flex-1 min-h-0 pr-1 stagger-children">
+            <div ref={listRef} className="space-y-1.5 overflow-y-auto flex-1 min-h-0 pr-1 stagger-children">
               {jobs.map(job => (
                 <div
                   key={job.id}
@@ -578,20 +609,16 @@ export default function JobQueue() {
                     {matching === selected.id ? '...' : '↻ Re-match'}
                   </button>
                 )}
-                {selected.match_pct != null && (
-                  <>
-                    <button onClick={() => handleLinkedIn(selected)}
-                      className="bg-surface-overlay hover:bg-border text-text-secondary text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 rounded-lg border border-border transition-all duration-200 btn-press">Recruiters</button>
-                    <button onClick={() => handleLinkedInLeaders(selected, 'hiring')}
-                      className="bg-surface-overlay hover:bg-border text-text-secondary text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 rounded-lg border border-border transition-all duration-200 btn-press">Hiring Mgr</button>
-                    <button onClick={() => handleLinkedInLeaders(selected, 'team')}
-                      className="bg-surface-overlay hover:bg-border text-text-secondary text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 rounded-lg border border-border transition-all duration-200 btn-press">Referral</button>
-                    <button onClick={() => handleFindEmails(selected)} disabled={emailLoading}
-                      className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 rounded-lg border border-border transition-all duration-200 btn-press">
-                      {emailLoading ? 'Finding...' : 'Emails'}
-                    </button>
-                  </>
-                )}
+                <button onClick={() => handleLinkedIn(selected)}
+                  className="bg-surface-overlay hover:bg-border text-text-secondary text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 rounded-lg border border-border transition-all duration-200 btn-press">Recruiters</button>
+                <button onClick={() => handleLinkedInLeaders(selected, 'hiring')}
+                  className="bg-surface-overlay hover:bg-border text-text-secondary text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 rounded-lg border border-border transition-all duration-200 btn-press">Hiring Mgr</button>
+                <button onClick={() => handleLinkedInLeaders(selected, 'team')}
+                  className="bg-surface-overlay hover:bg-border text-text-secondary text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 rounded-lg border border-border transition-all duration-200 btn-press">Referral</button>
+                <button onClick={() => handleFindEmails(selected)} disabled={emailLoading}
+                  className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 rounded-lg border border-border transition-all duration-200 btn-press">
+                  {emailLoading ? 'Finding...' : 'Emails'}
+                </button>
               </div>
 
               {/* Row 2: Status actions */}
