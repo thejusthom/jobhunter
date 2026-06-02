@@ -130,8 +130,9 @@ def list_jobs(
     limit: int = 25,
     offset: int = 0,
     search: str | None = None,
+    sort: str | None = None,
 ):
-    jobs = db.get_jobs(status=status, min_score=min_score, limit=limit, offset=offset, search=search)
+    jobs = db.get_jobs(status=status, min_score=min_score, limit=limit, offset=offset, search=search, sort=sort)
     jobs = [_parse_json_fields(j) for j in jobs]
     total = db.count_jobs(status=status, min_score=min_score, search=search)
     return {"jobs": jobs, "total": total, "limit": limit, "offset": offset}

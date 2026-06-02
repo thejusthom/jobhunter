@@ -193,7 +193,21 @@ def migrate_json_to_db():
 
 # --- Job queries ---
 
-def get_jobs(status=None, min_score=None, limit=100, offset=0, search=None):
+SORT_OPTIONS = {
+    "newest": "discovered_at DESC",
+    "oldest": "discovered_at ASC",
+    "match_desc": "match_pct DESC NULLS LAST",
+    "match_asc": "match_pct ASC NULLS LAST",
+    "score_desc": "score DESC",
+    "score_asc": "score ASC",
+    "company_asc": "company ASC",
+    "company_desc": "company DESC",
+    "salary_desc": "salary_max DESC NULLS LAST",
+    "title_asc": "title ASC",
+}
+
+
+def get_jobs(status=None, min_score=None, limit=100, offset=0, search=None, sort=None):
     clauses, params = [], []
     if status:
         clauses.append("status = ?")
@@ -206,9 +220,10 @@ def get_jobs(status=None, min_score=None, limit=100, offset=0, search=None):
         like = f"%{search}%"
         params.extend([like] * 2)
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    order = SORT_OPTIONS.get(sort, "acted_at DESC NULLS LAST, discovered_at DESC, match_pct DESC")
     params.extend([limit, offset])
     with get_db() as db:
-        rows = db.execute(f"SELECT * FROM jobs {where} ORDER BY acted_at DESC NULLS LAST, discovered_at DESC, match_pct DESC LIMIT ? OFFSET ?", params).fetchall()
+        rows = db.execute(f"SELECT * FROM jobs {where} ORDER BY {order} LIMIT ? OFFSET ?", params).fetchall()
         return [dict(r) for r in rows]
 
 

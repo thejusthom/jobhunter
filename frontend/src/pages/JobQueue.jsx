@@ -58,6 +58,7 @@ export default function JobQueue() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
   const [filter, setFilter] = useState(searchParams.get('select') ? '' : 'pending')
+  const [sort, setSort] = useState('')
   const [selected, setSelected] = useState(null)
   const [matching, setMatching] = useState(null)
   const [matchResult, setMatchResult] = useState(null)
@@ -84,6 +85,7 @@ export default function JobQueue() {
     const params = { limit: PAGE_SIZE, offset: page * PAGE_SIZE }
     if (filter) params.status = filter
     if (searchDebounced.trim()) params.search = searchDebounced.trim()
+    if (sort) params.sort = sort
     api.getJobs(params).then(data => {
       setJobs(data.jobs || [])
       setTotal(data.total || 0)
@@ -94,7 +96,7 @@ export default function JobQueue() {
         })
       }
     }).finally(() => setLoading(false))
-  }, [filter, page, searchDebounced])
+  }, [filter, page, searchDebounced, sort])
 
   useEffect(() => { load() }, [load])
 
@@ -453,6 +455,28 @@ export default function JobQueue() {
               {s || 'All'}
             </button>
           ))}
+        </div>
+
+        {/* Sort */}
+        <div className="flex items-center gap-2 mb-3 animate-fade-in-up" style={{ animationDelay: '75ms' }}>
+          <span className="text-xs text-text-muted">Sort:</span>
+          <select
+            value={sort}
+            onChange={e => { setSort(e.target.value); setPage(0) }}
+            className="bg-surface border border-border rounded-lg text-xs text-text-primary px-2 py-1.5 outline-none cursor-pointer focus:border-accent/40 transition-all duration-200 flex-1"
+          >
+            <option value="">Default</option>
+            <option value="newest">Newest First</option>
+            <option value="oldest">Oldest First</option>
+            <option value="match_desc">Match % High→Low</option>
+            <option value="match_asc">Match % Low→High</option>
+            <option value="score_desc">Relevance Score High→Low</option>
+            <option value="score_asc">Relevance Score Low→High</option>
+            <option value="company_asc">Company A→Z</option>
+            <option value="company_desc">Company Z→A</option>
+            <option value="salary_desc">Salary High→Low</option>
+            <option value="title_asc">Title A→Z</option>
+          </select>
         </div>
 
         {/* Search */}
