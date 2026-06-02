@@ -519,6 +519,31 @@ def _fetch_jd_from_url(url: str) -> dict:
     except Exception as e:
         _log(f"[fetch-jd] Error fetching {url}: {e}")
 
+    # --- Clean up company name ---
+    COMPANY_NAME_MAP = {
+        "amazon.jobs": "Amazon",
+        "google careers": "Google",
+        "microsoft careers": "Microsoft",
+        "meta careers": "Meta",
+        "apple jobs": "Apple",
+        "apple careers at apple": "Apple",
+        "netflix jobs": "Netflix",
+    }
+    if result["company"]:
+        cleaned = COMPANY_NAME_MAP.get(result["company"].lower())
+        if cleaned:
+            result["company"] = cleaned
+        # Strip trailing " careers", " jobs", ".jobs" suffixes
+        else:
+            result["company"] = re.sub(r'\s*(?:careers|jobs)$', '', result["company"], flags=re.I).strip()
+            result["company"] = re.sub(r'\.jobs$', '', result["company"], flags=re.I).strip()
+
+    # Also try to extract company from URL domain
+    if not result["company"]:
+        domain_match = re.search(r'https?://(?:www\.)?([^./]+)', url)
+        if domain_match:
+            result["company"] = domain_match.group(1).title()
+
     return result
 
 
@@ -566,30 +591,53 @@ def add_job_by_url(body: AddJobByUrl):
 
     jid = hashlib.md5(url.encode()).hexdigest()[:12]
 
-    entry = {
-        "id": jid,
-        "title": title,
-        "company": company,
-        "location": location,
-        "apply_link": apply_link,
-        "ats": ats_type,
-        "score": 0,
-        "description": description,
-        "posted_at": "",
-        "discovered_at": datetime.now(timezone.utc).isoformat(),
-        "source": "manual_url",
-        "query": "",
-    }
-    db.upsert_jobs([entry])
-    # Force-update key fields in case the job already existed with stale data
-    overwrite = {}
-    if title: overwrite["title"] = title
-    if company: overwrite["company"] = company
-    if location: overwrite["location"] = location
-    if description: overwrite["description"] = description
-    if ats_type: overwrite["ats"] = ats_type
-    if overwrite:
+    # Check if a job with matching title+company already exists (e.g. from Simplify/JSearch discovery)
+    existing_job = None
+    if title and company:
+        existing_jobs = db.get_jobs(search=title, limit=50)
+        for ej in existing_jobs:
+            if (ej.get("title", "").lower().strip() == title.lower().strip()
+                    and ej.get("company", "").lower().strip() == company.lower().strip()):
+                existing_job = ej
+                break
+
+    if existing_job:
+        # Update the existing job in-place instead of creating a duplicate
+        jid = existing_job["id"]
+        overwrite = {"apply_link": apply_link}
+        if description:
+            overwrite["description"] = description
+        if ats_type:
+            overwrite["ats"] = ats_type
+        if location and not existing_job.get("location"):
+            overwrite["location"] = location
         db.update_job(jid, **overwrite)
+    else:
+        entry = {
+            "id": jid,
+            "title": title,
+            "company": company,
+            "location": location,
+            "apply_link": apply_link,
+            "ats": ats_type,
+            "score": 0,
+            "description": description,
+            "posted_at": "",
+            "discovered_at": datetime.now(timezone.utc).isoformat(),
+            "source": "manual_url",
+            "query": "",
+        }
+        db.upsert_jobs([entry])
+        # Force-update key fields in case the job already existed with stale data
+        overwrite = {}
+        if title: overwrite["title"] = title
+        if company: overwrite["company"] = company
+        if location: overwrite["location"] = location
+        if description: overwrite["description"] = description
+        if ats_type: overwrite["ats"] = ats_type
+        if overwrite:
+            db.update_job(jid, **overwrite)
+
     return _parse_json_fields(db.get_job(jid))
 
 
