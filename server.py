@@ -418,6 +418,47 @@ def _fetch_jd_from_url(url: str) -> dict:
             except Exception as e:
                 _log(f"[fetch-jd] LinkedIn fallback error: {e}")
 
+        # --- Apple jobs (jobs.apple.com) — SSR hydration data ---
+        apple_match = re.match(r"https?://jobs\.apple\.com/[\w-]+/details/(\d+(?:-\d+)?)", url)
+        if apple_match:
+            from ats_discovery import _parse_apple_ssr
+            try:
+                r = http_requests.get(url, timeout=15, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }, allow_redirects=True)
+                if r.status_code == 200:
+                    ssr_data = _parse_apple_ssr(r.text)
+                    if ssr_data:
+                        jd = (ssr_data.get("loaderData", {})
+                              .get("jobDetails", {})
+                              .get("jobsData", {}))
+                        result["title"] = jd.get("postingTitle", "")
+                        result["company"] = "Apple"
+                        # Location
+                        locs = jd.get("locations", [])
+                        if locs:
+                            result["location"] = locs[0].get("name", "")
+                        # Full description — combine all sections
+                        sections = []
+                        for key, label in [
+                            ("jobSummary", "Summary"),
+                            ("description", "Description"),
+                            ("responsibilities", "Key Responsibilities"),
+                            ("minimumQualifications", "Minimum Qualifications"),
+                            ("preferredQualifications", "Preferred Qualifications"),
+                        ]:
+                            val = jd.get(key, "")
+                            if val:
+                                sections.append(f"{label}\n{_strip_html(val)}")
+                        if sections:
+                            result["description"] = "\n\n".join(sections)
+                        result["ats"] = "apple"
+                        result["apply_link"] = url
+                        if result["title"]:
+                            return result
+            except Exception as e:
+                _log(f"[fetch-jd] Apple SSR error: {e}")
+
         # --- Fallback: scrape page for text ---
         r = http_requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"}, allow_redirects=True)
         if r.status_code == 200:

@@ -489,10 +489,20 @@ def fetch_apple(company_name: str = "Apple") -> list:
                         jd = (detail_data.get("loaderData", {})
                               .get("jobDetails", {})
                               .get("jobsData", {}))
-                        full_desc = jd.get("description", "")
-                        summary = jd.get("jobSummary", "")
-                        if full_desc or summary:
-                            description = (summary + "\n" + full_desc).strip()
+                        # Combine all sections for complete JD
+                        sections = []
+                        for dkey, dlabel in [
+                            ("jobSummary", "Summary"),
+                            ("description", "Description"),
+                            ("responsibilities", "Key Responsibilities"),
+                            ("minimumQualifications", "Minimum Qualifications"),
+                            ("preferredQualifications", "Preferred Qualifications"),
+                        ]:
+                            val = jd.get(dkey, "")
+                            if val:
+                                sections.append(f"{dlabel}\n{_strip_html(val)}")
+                        if sections:
+                            description = "\n\n".join(sections)
                 time.sleep(0.3)
             except Exception:
                 pass  # fall back to search-page summary
