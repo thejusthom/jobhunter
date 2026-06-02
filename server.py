@@ -1158,12 +1158,14 @@ def match_job(job_id: str):
         "- PhD REQUIRED (not preferred): cap at 35 — candidate has MS only\n"
         "- Security clearance required: cap at 10\n"
         "- No sponsorship / must be authorized to work: cap at 5 — ONLY if the JD explicitly states 'no visa sponsorship', 'will not sponsor', etc. E-Verify is NOT a sponsorship restriction. Do NOT assume based on company name, salary, or E-Verify.\n"
-        "- Senior/Staff/Lead with 5+ years required: cap at 40 — candidate has ~3 years\n"
         "- Principal/Director level: cap at 15\n"
         "- Requires C/C++ as PRIMARY language: cap at 30 — candidate doesn't know C++\n"
         "- Salary >$300K usually means senior+ — factor seniority mismatch\n"
         "- ML Engineer/Scientist roles requiring model training, ML research, or deep statistics: cap at 45\n"
         "  (candidate builds APPS with LLMs/AI, does NOT train models or do ML research)\n\n"
+        "SENIORITY GUIDANCE (penalize, do NOT hard cap):\n"
+        "- Senior/Staff/Lead with 5+ years required: candidate has ~3 years. Penalize 10-15 points but score based on actual skill match. A strong skill match with a seniority gap can still score 60-75.\n"
+        "- Senior roles with 3-4 years required: minor penalty (5-10 points), candidate is close\n\n"
         "GOOD MATCH SIGNALS (score 75+):\n"
         "- New grad / entry-level / 0-2 years roles\n"
         "- Java + Spring Boot backend roles\n"
@@ -1257,21 +1259,25 @@ def match_job(job_id: str):
     elif seniority in ("senior", "staff", "lead"):
         min_years = result.get("min_years_required")
         if min_years and min_years >= 5:
-            score = min(score, 40)
+            # Soft penalty: reduce by 15% instead of hard cap
+            score = int(score * 0.85)
             warnings.append(f"SENIOR ({min_years}+ yrs required)")
         elif min_years and min_years >= 3:
-            score = min(score, 55)
+            # Minor penalty for close-range seniority gap
+            score = int(score * 0.92)
 
-    # Experience cap even if seniority wasn't detected
+    # Experience penalty even if seniority wasn't detected (soft, not hard cap)
     min_years = result.get("min_years_required")
     if min_years and min_years >= 7:
-        score = min(score, 30)
+        score = int(score * 0.75)
         if "yrs" not in " ".join(warnings).lower():
             warnings.append(f"Requires {min_years}+ years")
     elif min_years and min_years >= 5:
-        score = min(score, 40)
-        if "yrs" not in " ".join(warnings).lower():
-            warnings.append(f"Requires {min_years}+ years")
+        # Only apply if seniority block didn't already penalize
+        if seniority not in ("senior", "staff", "lead"):
+            score = int(score * 0.85)
+            if "yrs" not in " ".join(warnings).lower():
+                warnings.append(f"Requires {min_years}+ years")
     elif min_years and min_years >= 4:
         score = min(score, 60)
 
