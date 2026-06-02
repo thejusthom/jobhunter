@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '../api'
 
 function formatDateForInput(date) {
@@ -125,16 +126,28 @@ export default function Reminders() {
             <div key={r.id} className={`bg-surface-raised border rounded-lg p-3.5 flex items-center justify-between transition-all duration-150 ${
               r.completed ? 'border-border opacity-50' : isOverdue(r.due_date) ? 'border-danger/40' : 'border-border hover:border-border-hover'
             }`}>
-              <div>
+              <div className="min-w-0 flex-1">
                 <div className={`font-medium text-sm ${r.completed ? 'text-text-muted line-through' : 'text-text-primary'}`}>
                   {r.title}
                 </div>
                 <div className="text-sm text-text-tertiary">
-                  {r.app_company && `${r.app_company} · `}
+                  {(r.job_company || r.app_company) && (
+                    <span>{r.job_company || r.app_company}{r.job_title ? ` · ${r.job_title}` : r.app_title ? ` · ${r.app_title}` : ''} · </span>
+                  )}
                   <span className={isOverdue(r.due_date) && !r.completed ? 'text-danger' : ''}>
                     Due: {new Date(r.due_date).toLocaleString()}
                   </span>
                 </div>
+                {r.job_id && !r.completed && (
+                  <div className="flex gap-3 mt-0.5">
+                    <Link to={`/jobs?select=${r.job_id}`}
+                      className="text-xs text-accent hover:underline">View in Queue</Link>
+                    {r.job_link && (
+                      <a href={r.job_link} target="_blank" rel="noopener noreferrer"
+                        className="text-xs text-blue-400 hover:underline">Open Job Link</a>
+                    )}
+                  </div>
+                )}
               </div>
               {!r.completed && (
                 <button

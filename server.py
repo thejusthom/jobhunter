@@ -94,6 +94,7 @@ class RecruiterCreate(BaseModel):
 class ReminderCreate(BaseModel):
     application_id: int | None = None
     recruiter_id: int | None = None
+    job_id: str | None = None
     title: str
     due_date: str
 

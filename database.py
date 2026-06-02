@@ -87,6 +87,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             application_id INTEGER DEFAULT NULL,
             recruiter_id INTEGER DEFAULT NULL,
+            job_id TEXT DEFAULT NULL,
             title TEXT NOT NULL,
             due_date TEXT NOT NULL,
             completed INTEGER DEFAULT 0,
@@ -145,6 +146,11 @@ def init_db():
             db.execute("ALTER TABLE jobs ADD COLUMN salary_min INTEGER DEFAULT NULL")
         if "salary_max" not in cols:
             db.execute("ALTER TABLE jobs ADD COLUMN salary_max INTEGER DEFAULT NULL")
+
+        # Add job_id column to reminders if missing
+        reminder_cols = {r[1] for r in db.execute("PRAGMA table_info(reminders)").fetchall()}
+        if "job_id" not in reminder_cols:
+            db.execute("ALTER TABLE reminders ADD COLUMN job_id TEXT DEFAULT NULL")
 
 
 def migrate_json_to_db():
@@ -387,12 +393,14 @@ def create_recruiter(**fields):
 # --- Reminder queries ---
 
 def get_reminders(include_completed=False):
-    clause = "" if include_completed else "WHERE completed = 0"
+    clause = "" if include_completed else "WHERE r.completed = 0"
     with get_db() as db:
         rows = db.execute(f"""
-            SELECT r.*, a.title as app_title, a.company as app_company
+            SELECT r.*, a.title as app_title, a.company as app_company,
+                   j.title as job_title, j.company as job_company, j.apply_link as job_link
             FROM reminders r
             LEFT JOIN applications a ON r.application_id = a.id
+            LEFT JOIN jobs j ON r.job_id = j.id
             {clause}
             ORDER BY r.due_date ASC
         """).fetchall()
@@ -402,9 +410,11 @@ def get_reminders(include_completed=False):
 def get_due_reminders():
     with get_db() as db:
         rows = db.execute("""
-            SELECT r.*, a.title as app_title, a.company as app_company
+            SELECT r.*, a.title as app_title, a.company as app_company,
+                   j.title as job_title, j.company as job_company, j.apply_link as job_link
             FROM reminders r
             LEFT JOIN applications a ON r.application_id = a.id
+            LEFT JOIN jobs j ON r.job_id = j.id
             WHERE r.completed = 0 AND r.due_date <= datetime('now')
             ORDER BY r.due_date ASC
         """).fetchall()
@@ -415,10 +425,10 @@ def create_reminder(**fields):
     now = datetime.now(timezone.utc).isoformat()
     with get_db() as db:
         cursor = db.execute("""
-            INSERT INTO reminders (application_id, recruiter_id, title, due_date, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO reminders (application_id, recruiter_id, job_id, title, due_date, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
         """, (
-            fields.get("application_id"), fields.get("recruiter_id"),
+            fields.get("application_id"), fields.get("recruiter_id"), fields.get("job_id"),
             fields.get("title", ""), fields.get("due_date", ""), now,
         ))
         return cursor.lastrowid

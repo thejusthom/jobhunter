@@ -57,8 +57,11 @@ export default function Dashboard() {
           <div className="space-y-1">
             {due_reminders.map(r => (
               <div key={r.id} className="flex justify-between items-center py-1.5">
-                <span className="text-text-primary text-sm">{r.title} {r.app_company && <span className="text-text-tertiary">- {r.app_company}</span>}</span>
-                <span className="text-accent text-sm font-medium">{new Date(r.due_date).toLocaleDateString()}</span>
+                <div>
+                  <span className="text-text-primary text-sm">{r.title} {(r.job_company || r.app_company) && <span className="text-text-tertiary">- {r.job_company || r.app_company}</span>}</span>
+                  {r.job_id && <Link to={`/jobs?select=${r.job_id}`} className="text-xs text-accent hover:underline ml-2">View Job</Link>}
+                </div>
+                <span className="text-accent text-sm font-medium shrink-0 ml-3">{new Date(r.due_date).toLocaleDateString()}</span>
               </div>
             ))}
           </div>

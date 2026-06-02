@@ -243,6 +243,38 @@ export default function JobQueue() {
     }
   }
 
+  const [reminderSet, setReminderSet] = useState(null)
+  const [showReminderForm, setShowReminderForm] = useState(false)
+  const [reminderForm, setReminderForm] = useState({ title: '', date: '', time: '10:00' })
+
+  const openReminderForm = (job) => {
+    const tomorrow = new Date()
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    const dateStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`
+    setReminderForm({
+      title: `Reach out to recruiter — ${job.title} @ ${job.company}`,
+      date: dateStr,
+      time: '10:00',
+    })
+    setShowReminderForm(true)
+  }
+
+  const handleSetReminder = async (job) => {
+    const due_date = `${reminderForm.date}T${reminderForm.time}:00`
+    try {
+      await api.createReminder({
+        job_id: job.id,
+        title: reminderForm.title,
+        due_date,
+      })
+      setShowReminderForm(false)
+      setReminderSet(job.id)
+      setTimeout(() => setReminderSet(null), 3000)
+    } catch (e) {
+      alert(e.message)
+    }
+  }
+
   const handleLinkedIn = async (job) => {
     try {
       const result = await api.linkedinSearch(job.id)
@@ -344,6 +376,7 @@ export default function JobQueue() {
     setSelected(null)
     setOutreach(null)
     setMatchResult(null)
+    setShowReminderForm(false)
   }
 
   return (
@@ -469,6 +502,7 @@ export default function JobQueue() {
                   onClick={async () => {
                     setSelected(job)
                     setMatchResult(null)
+                    setShowReminderForm(false)
                     if (job.outreach_full && job.outreach_short) {
                       setOutreach({ full: job.outreach_full, short: job.outreach_short })
                     } else if (job.match_pct != null) {
@@ -675,7 +709,45 @@ export default function JobQueue() {
                     {copied === 'short' ? '✓ Short Copied' : 'Copy Short Outreach'}
                   </button>
                 )}
+                <button onClick={() => showReminderForm ? setShowReminderForm(false) : openReminderForm(selected)}
+                  className={`text-[11px] sm:text-xs px-2.5 sm:px-3 py-1.5 rounded-md transition-all duration-300 border btn-press ${
+                    reminderSet === selected.id ? 'bg-amber-900/20 text-amber-400 border-amber-500/20 scale-105'
+                    : showReminderForm ? 'bg-amber-900/20 text-amber-400 border-amber-500/30'
+                    : 'bg-amber-900/10 text-amber-400/70 hover:text-amber-400 border-amber-500/15'
+                  }`}>
+                  {reminderSet === selected.id ? '✓ Reminder Set' : showReminderForm ? 'Cancel' : 'Set Reminder'}
+                </button>
               </div>
+
+              {/* Inline reminder form */}
+              {showReminderForm && (
+                <div className="bg-amber-900/10 border border-amber-500/20 rounded-lg p-3 animate-fade-in">
+                  <input
+                    value={reminderForm.title}
+                    onChange={e => setReminderForm({ ...reminderForm, title: e.target.value })}
+                    className="w-full text-xs bg-surface border border-border rounded-md px-2.5 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-amber-500/40 mb-2"
+                    placeholder="Reminder title"
+                  />
+                  <div className="flex gap-2 items-center">
+                    <input
+                      type="date"
+                      value={reminderForm.date}
+                      onChange={e => setReminderForm({ ...reminderForm, date: e.target.value })}
+                      className="flex-1 text-xs bg-surface border border-border rounded-md px-2 py-1.5 text-text-primary focus:outline-none focus:border-amber-500/40"
+                    />
+                    <input
+                      type="time"
+                      value={reminderForm.time}
+                      onChange={e => setReminderForm({ ...reminderForm, time: e.target.value })}
+                      className="w-24 text-xs bg-surface border border-border rounded-md px-2 py-1.5 text-text-primary focus:outline-none focus:border-amber-500/40"
+                    />
+                    <button
+                      onClick={() => handleSetReminder(selected)}
+                      className="text-xs px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-md transition-all shrink-0"
+                    >Save</button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Scrollable content */}
