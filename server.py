@@ -295,6 +295,31 @@ def _fetch_jd_from_url(url: str) -> dict:
                         return result
                     else:
                         _log(f"[fetch-jd] Greenhouse API returned {r.status_code} for board={board_guess}, gh_jid={gh_jid}")
+                        # Board guess failed — scrape the page for the real board token
+                        try:
+                            page_r = http_requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+                            if page_r.status_code == 200:
+                                page_text = page_r.text.replace("\\/", "/")
+                                board_match = re.search(r'boards(?:-api)?\.greenhouse\.io/(?:v1/boards/)?(\w+)/jobs/' + gh_jid, page_text)
+                                if board_match:
+                                    real_board = board_match.group(1)
+                                    _log(f"[fetch-jd] Found real Greenhouse board: {real_board}")
+                                    r2 = http_requests.get(
+                                        f"https://boards-api.greenhouse.io/v1/boards/{real_board}/jobs/{gh_jid}",
+                                        timeout=10,
+                                    )
+                                    if r2.status_code == 200:
+                                        data = r2.json()
+                                        result["title"] = data.get("title", "")
+                                        result["description"] = _strip_html(data.get("content", ""))
+                                        loc = data.get("location", {})
+                                        result["location"] = loc.get("name", "") if isinstance(loc, dict) else str(loc)
+                                        result["company"] = data.get("company", {}).get("name", real_board.title())
+                                        result["apply_link"] = data.get("absolute_url", url)
+                                        result["ats"] = "greenhouse"
+                                        return result
+                        except Exception as e:
+                            _log(f"[fetch-jd] Greenhouse board discovery error: {e}")
 
         if gh_match:
             board = gh_match.group(1)
