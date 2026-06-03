@@ -70,7 +70,7 @@ export default function JobQueue() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
   const [filter, setFilter] = useState(searchParams.get('select') ? '' : 'pending')
-  const [sort, setSort] = useState('posted_newest')
+  const [sort, setSort] = useState('newest')
   const [selected, setSelected] = useState(null)
   const [matching, setMatching] = useState(null)
   const [matchResult, setMatchResult] = useState(null)
