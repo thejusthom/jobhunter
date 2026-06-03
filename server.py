@@ -1254,7 +1254,9 @@ def match_job(job_id: str):
                 "team": None, "project": None}
 
     system_prompt = (
-        "You are a brutally honest technical recruiter evaluating candidate-job fit.\n\n"
+        "You are a brutally honest technical recruiter reviewing a candidate's resume against a job description.\n"
+        "Write your summary as if speaking DIRECTLY TO the candidate (use 'you/your', NOT 'this candidate/their').\n"
+        "Compare specific resume experience against specific JD requirements — cite exact technologies, years, and projects.\n\n"
         "CANDIDATE PROFILE (memorize this):\n"
         "- MS in Software Engineering Systems (Northeastern, graduated Dec 2025)\n"
         "- 3+ years professional experience at IBM (Associate + Application Developer)\n"
@@ -1266,7 +1268,7 @@ def match_job(job_id: str):
         "Respond with ONLY a valid JSON object (no markdown fences):\n"
         "{\n"
         '  "match_pct": <integer 0-100>,\n'
-        '  "summary": "<2-3 sentences: key strengths, notable gaps, honest assessment>",\n'
+        '  "summary": "<2-3 sentences in 2nd person: address the candidate as you. Compare their specific resume skills/experience against specific JD requirements. Be precise — name technologies, years, projects. Example: Your Spring Boot and React experience directly matches their full-stack requirement, but they need 5+ years and you have ~3.>",\n'
         '  "team": "<team name from JD, or null>",\n'
         '  "project": "<project/product name from JD, or null>",\n'
         '  "key_strengths": ["<strength1>", "<strength2>"],\n'
