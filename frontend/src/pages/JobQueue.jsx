@@ -846,6 +846,32 @@ export default function JobQueue() {
                   >Save Description</button>
                 </div>
               )}
+
+              {/* Contact LinkedIn */}
+              <div className="flex items-center gap-2 animate-fade-in" style={{ animationDelay: '250ms' }}>
+                <span className="text-[11px] text-text-muted shrink-0">Contact:</span>
+                <input
+                  type="text"
+                  value={selected.contact_linkedin || ''}
+                  onChange={e => setSelected(prev => ({ ...prev, contact_linkedin: e.target.value }))}
+                  onBlur={e => {
+                    const val = e.target.value.trim()
+                    if (val !== (selected._savedContactLinkedin || '')) {
+                      api.updateJob(selected.id, { contact_linkedin: val })
+                      setSelected(prev => ({ ...prev, _savedContactLinkedin: val }))
+                    }
+                  }}
+                  placeholder="Paste recruiter/contact LinkedIn URL..."
+                  className="flex-1 text-[11px] bg-surface border border-border rounded-md px-2 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/40 transition-all"
+                />
+                {selected.contact_linkedin && (
+                  <a href={selected.contact_linkedin.startsWith('http') ? selected.contact_linkedin : `https://${selected.contact_linkedin}`}
+                    target="_blank" rel="noopener noreferrer"
+                    className="text-[11px] text-accent hover:underline shrink-0">
+                    Open
+                  </a>
+                )}
+              </div>
             </div>
 
             {/* Scrollable content */}

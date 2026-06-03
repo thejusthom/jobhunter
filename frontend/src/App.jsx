@@ -193,6 +193,13 @@ export default function App() {
                         Open Link
                       </a>
                     )}
+                    {r.job_contact_linkedin && (
+                      <a href={r.job_contact_linkedin.startsWith('http') ? r.job_contact_linkedin : `https://${r.job_contact_linkedin}`}
+                        target="_blank" rel="noopener noreferrer"
+                        className="text-xs text-sky-400 hover:underline">
+                        Contact
+                      </a>
+                    )}
                   </div>
                 </div>
                 <button onClick={() => dismissReminder(r.id)}

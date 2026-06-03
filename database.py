@@ -152,6 +152,10 @@ def init_db():
         if "job_id" not in reminder_cols:
             db.execute("ALTER TABLE reminders ADD COLUMN job_id TEXT DEFAULT NULL")
 
+        # Add contact_linkedin column to jobs if missing
+        if "contact_linkedin" not in cols:
+            db.execute("ALTER TABLE jobs ADD COLUMN contact_linkedin TEXT DEFAULT NULL")
+
 
 def migrate_json_to_db():
     """One-time migration from queue.json and application_log.json to SQLite."""
@@ -236,7 +240,7 @@ def get_job(job_id):
 
 
 def update_job(job_id, **fields):
-    allowed = {"status", "notes", "match_pct", "match_summary", "team", "project", "recommended_resume", "resume_scores", "matched_keywords", "outreach_full", "outreach_short", "description", "salary_min", "salary_max", "title", "company", "location", "ats", "apply_link"}
+    allowed = {"status", "notes", "match_pct", "match_summary", "team", "project", "recommended_resume", "resume_scores", "matched_keywords", "outreach_full", "outreach_short", "description", "salary_min", "salary_max", "title", "company", "location", "ats", "apply_link", "contact_linkedin"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
@@ -414,7 +418,7 @@ def get_reminders(include_completed=False):
     with get_db() as db:
         rows = db.execute(f"""
             SELECT r.*, a.title as app_title, a.company as app_company,
-                   j.title as job_title, j.company as job_company, j.apply_link as job_link
+                   j.title as job_title, j.company as job_company, j.apply_link as job_link, j.contact_linkedin as job_contact_linkedin
             FROM reminders r
             LEFT JOIN applications a ON r.application_id = a.id
             LEFT JOIN jobs j ON r.job_id = j.id
@@ -428,7 +432,7 @@ def get_due_reminders():
     with get_db() as db:
         rows = db.execute("""
             SELECT r.*, a.title as app_title, a.company as app_company,
-                   j.title as job_title, j.company as job_company, j.apply_link as job_link
+                   j.title as job_title, j.company as job_company, j.apply_link as job_link, j.contact_linkedin as job_contact_linkedin
             FROM reminders r
             LEFT JOIN applications a ON r.application_id = a.id
             LEFT JOIN jobs j ON r.job_id = j.id

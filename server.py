@@ -58,6 +58,7 @@ class JobUpdate(BaseModel):
     status: str | None = None
     notes: str | None = None
     description: str | None = None
+    contact_linkedin: str | None = None
     match_pct: float | None = None
     match_summary: str | None = None
     team: str | None = None
