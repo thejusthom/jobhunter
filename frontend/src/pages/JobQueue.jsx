@@ -575,19 +575,23 @@ export default function JobQueue() {
                     setMatchResult(null)
                     setShowReminderForm(false)
                     setShowPasteJd(false)
-                    if (job.outreach_full && job.outreach_short) {
-                      setOutreach({ full: job.outreach_full, short: job.outreach_short })
-                    } else if (job.match_pct != null) {
-                      // Job was matched but outreach missing from list — fetch full job
-                      setOutreach(null)
-                      try {
-                        const full = await api.getJob(job.id)
-                        if (full.outreach_full && full.outreach_short) {
-                          setOutreach({ full: full.outreach_full, short: full.outreach_short })
-                        }
-                      } catch (_) {}
-                    } else {
-                      setOutreach(null)
+                    setContactSaved(null)
+                    // Fetch full job to get all fields (contact_linkedin, outreach, etc.)
+                    try {
+                      const full = await api.getJob(job.id)
+                      setSelected(full)
+                      if (full.outreach_full && full.outreach_short) {
+                        setOutreach({ full: full.outreach_full, short: full.outreach_short })
+                      } else {
+                        setOutreach(null)
+                      }
+                    } catch (_) {
+                      // Fallback to list data
+                      if (job.outreach_full && job.outreach_short) {
+                        setOutreach({ full: job.outreach_full, short: job.outreach_short })
+                      } else {
+                        setOutreach(null)
+                      }
                     }
                   }}
                   className={`bg-surface-raised border rounded-lg p-3.5 cursor-pointer transition-all duration-200 hover:translate-x-0.5 group ${
