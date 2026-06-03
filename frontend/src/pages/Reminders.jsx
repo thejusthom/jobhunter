@@ -28,7 +28,7 @@ export default function Reminders() {
   const [loading, setLoading] = useState(true)
   const [showAll, setShowAll] = useState(false)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ title: '', date: getDefaultDate(), time: '09:00', application_id: '' })
+  const [form, setForm] = useState({ title: '', date: getDefaultDate(), time: '10:00', application_id: '' })
 
   const load = () => {
     setLoading(true)
@@ -42,7 +42,7 @@ export default function Reminders() {
     const data = { title: form.title, due_date }
     if (form.application_id) data.application_id = parseInt(form.application_id)
     await api.createReminder(data)
-    setForm({ title: '', date: getDefaultDate(), time: '09:00', application_id: '' })
+    setForm({ title: '', date: getDefaultDate(), time: '10:00', application_id: '' })
     setShowForm(false)
     load()
   }

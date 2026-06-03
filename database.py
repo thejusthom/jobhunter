@@ -200,10 +200,10 @@ SORT_OPTIONS = {
     "match_asc": "match_pct ASC NULLS LAST",
     "score_desc": "score DESC",
     "score_asc": "score ASC",
-    "company_asc": "company ASC",
-    "company_desc": "company DESC",
+    "company_asc": "company COLLATE NOCASE ASC",
+    "company_desc": "company COLLATE NOCASE DESC",
     "salary_desc": "salary_max DESC NULLS LAST",
-    "title_asc": "title ASC",
+    "title_asc": "title COLLATE NOCASE ASC",
 }
 
 

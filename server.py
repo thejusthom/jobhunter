@@ -289,7 +289,7 @@ def _fetch_jd_from_url(url: str) -> dict:
                         result["description"] = _strip_html(data.get("content", ""))
                         loc = data.get("location", {})
                         result["location"] = loc.get("name", "") if isinstance(loc, dict) else str(loc)
-                        result["company"] = data.get("company", {}).get("name", board_guess.title())
+                        result["company"] = (data.get("company") or {}).get("name", "") or board_guess.replace("-", " ").title()
                         result["apply_link"] = data.get("absolute_url", url)
                         result["ats"] = "greenhouse"
                         return result
@@ -314,7 +314,7 @@ def _fetch_jd_from_url(url: str) -> dict:
                                         result["description"] = _strip_html(data.get("content", ""))
                                         loc = data.get("location", {})
                                         result["location"] = loc.get("name", "") if isinstance(loc, dict) else str(loc)
-                                        result["company"] = data.get("company", {}).get("name", real_board.title())
+                                        result["company"] = (data.get("company") or {}).get("name", "") or real_board.replace("-", " ").title()
                                         result["apply_link"] = data.get("absolute_url", url)
                                         result["ats"] = "greenhouse"
                                         return result
@@ -335,7 +335,7 @@ def _fetch_jd_from_url(url: str) -> dict:
                     result["description"] = _strip_html(data.get("content", ""))
                     loc = data.get("location", {})
                     result["location"] = loc.get("name", "") if isinstance(loc, dict) else str(loc)
-                    result["company"] = data.get("company", {}).get("name", board)
+                    result["company"] = (data.get("company") or {}).get("name", "") or board.replace("-", " ").title()
                     result["apply_link"] = data.get("absolute_url", url)
                     result["ats"] = "greenhouse"
                     return result

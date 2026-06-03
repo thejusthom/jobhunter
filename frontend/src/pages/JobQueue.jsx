@@ -52,6 +52,18 @@ const _badgeStyle = (colorObj) => colorObj ? {
 
 const PAGE_SIZE = 25
 
+function timeAgo(dateStr) {
+  if (!dateStr) return ''
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  if (days < 30) return `${days}d ago`
+  return `${Math.floor(days / 30)}mo ago`
+}
+
 export default function JobQueue() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [jobs, setJobs] = useState([])
@@ -125,6 +137,25 @@ export default function JobQueue() {
     setFilter(f)
     setPage(0)
   }
+
+  // Keyboard shortcuts for job queue
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
+      if (!selected) {
+        if (e.key === 'j' && jobs.length > 0) { setSelected(jobs[0]); setOutreach(null) }
+        return
+      }
+      const idx = jobs.findIndex(j => j.id === selected.id)
+      if (e.key === 'j' && idx < jobs.length - 1) { setSelected(jobs[idx + 1]); setOutreach(null); setMatchResult(null); setShowReminderForm(false); setShowPasteJd(false) }
+      else if (e.key === 'k' && idx > 0) { setSelected(jobs[idx - 1]); setOutreach(null); setMatchResult(null); setShowReminderForm(false); setShowPasteJd(false) }
+      else if (e.key === 'Escape') closeDetail()
+      else if (e.key === 's') handleSkipJob('Not interested', selected)
+      else if (e.key === 'o' && selected.apply_link) window.open(selected.apply_link, '_blank')
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [selected, jobs])
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
 
@@ -411,7 +442,7 @@ export default function JobQueue() {
               disabled={batchMatching}
               className="text-xs text-accent/70 hover:text-accent disabled:opacity-50 transition-all duration-150 btn-press"
             >
-              {batchMatching ? `Matching ${batchProgress.done}/${batchProgress.total}...` : 'Match All'}
+              {batchMatching ? `Matching ${batchProgress.done}/${batchProgress.total}...` : `Match All${jobs.filter(j => j.match_pct == null).length > 0 ? ` (${jobs.filter(j => j.match_pct == null).length})` : ''}`}
             </button>
           )}
           {filter === 'pending' && jobs.length > 0 && (
@@ -605,7 +636,7 @@ export default function JobQueue() {
                         })()}
                       </span>
                     )}
-                    {job.posted_at && <span className="ml-1">Posted {new Date(job.posted_at).toLocaleDateString()}</span>}
+                    {job.posted_at && <span className="ml-1">Posted {timeAgo(job.posted_at)}</span>}
                   </div>
                 </div>
               ))}
@@ -1027,6 +1058,9 @@ export default function JobQueue() {
                 </details>
               </div>
             )}
+            <div className="text-[10px] text-text-muted/40 mt-4 pb-2 text-center hidden md:block">
+              j/k navigate &middot; s skip &middot; o open link &middot; esc close
+            </div>
             </div>{/* end scrollable content */}
           </div>
         </>
