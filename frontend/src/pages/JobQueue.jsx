@@ -456,42 +456,39 @@ export default function JobQueue() {
           </form>
         </div>
 
-        {/* Filter tabs */}
-        <div className="flex gap-1 bg-surface rounded-lg p-1 border border-border mb-3 animate-fade-in-up" style={{ animationDelay: '50ms' }}>
-          {['pending', 'applied', 'skipped', ''].map(s => (
-            <button
-              key={s}
-              onClick={() => changeFilter(s)}
-              className={`text-xs px-3 py-1.5 rounded-md flex-1 transition-all duration-200 btn-press ${
-                filter === s
-                  ? 'bg-accent/15 text-accent font-medium shadow-sm'
-                  : 'text-text-muted hover:text-text-secondary'
-              }`}
-            >
-              {s || 'All'}
-            </button>
-          ))}
-        </div>
-
-        {/* Sort */}
-        <div className="flex items-center gap-2 mb-3 animate-fade-in-up" style={{ animationDelay: '75ms' }}>
-          <span className="text-xs text-text-muted">Sort:</span>
+        {/* Filter tabs + Sort */}
+        <div className="flex items-center gap-2 mb-3 animate-fade-in-up" style={{ animationDelay: '50ms' }}>
+          <div className="flex gap-1 bg-surface rounded-lg p-1 border border-border flex-1">
+            {['pending', 'applied', 'skipped', ''].map(s => (
+              <button
+                key={s}
+                onClick={() => changeFilter(s)}
+                className={`text-xs px-3 py-1.5 rounded-md flex-1 transition-all duration-200 btn-press ${
+                  filter === s
+                    ? 'bg-accent/15 text-accent font-medium shadow-sm'
+                    : 'text-text-muted hover:text-text-secondary'
+                }`}
+              >
+                {s || 'All'}
+              </button>
+            ))}
+          </div>
           <select
             value={sort}
             onChange={e => { setSort(e.target.value); setPage(0) }}
-            className="bg-surface border border-border rounded-lg text-xs text-text-primary px-2 py-1.5 outline-none cursor-pointer focus:border-accent/40 transition-all duration-200 flex-1"
+            className="bg-surface border border-border rounded-lg text-xs text-text-muted px-2 py-[7px] outline-none cursor-pointer hover:text-text-secondary hover:border-border-hover focus:border-accent/40 transition-all duration-200 shrink-0"
           >
-            <option value="">Default</option>
-            <option value="newest">Newest First</option>
-            <option value="oldest">Oldest First</option>
-            <option value="match_desc">Match % High→Low</option>
-            <option value="match_asc">Match % Low→High</option>
-            <option value="score_desc">Relevance Score High→Low</option>
-            <option value="score_asc">Relevance Score Low→High</option>
-            <option value="company_asc">Company A→Z</option>
-            <option value="company_desc">Company Z→A</option>
-            <option value="salary_desc">Salary High→Low</option>
-            <option value="title_asc">Title A→Z</option>
+            <option value="">Sort</option>
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="match_desc">Match ↓</option>
+            <option value="match_asc">Match ↑</option>
+            <option value="score_desc">Score ↓</option>
+            <option value="score_asc">Score ↑</option>
+            <option value="company_asc">Company A-Z</option>
+            <option value="company_desc">Company Z-A</option>
+            <option value="salary_desc">Salary ↓</option>
+            <option value="title_asc">Title A-Z</option>
           </select>
         </div>
 
