@@ -1170,6 +1170,24 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
                 _log(f"[simplify] Error: {e}")
 
     finally:
+        # Auto-fetch descriptions for jobs that have apply_link but no description
+        discovery_status["phase"] = "Fetching missing descriptions..."
+        try:
+            no_desc_jobs = db.get_db().execute(
+                "SELECT id, apply_link FROM jobs WHERE (description IS NULL OR description = '') AND apply_link != '' AND status = 'pending' LIMIT 20"
+            ).fetchall()
+            for nj in no_desc_jobs:
+                try:
+                    fetched = _fetch_jd_from_url(nj["apply_link"])
+                    desc = fetched.get("description", "").strip()
+                    if desc:
+                        db.update_job(nj["id"], description=desc)
+                        _log(f"[discovery] Fetched JD for {nj['id'][:8]} ({len(desc)} chars)")
+                except Exception:
+                    pass
+        except Exception as e:
+            _log(f"[discovery] JD fetch phase error: {e}")
+
         now = datetime.now(timezone.utc).isoformat()
         discovery_status["running"] = False
         discovery_status["phase"] = ""

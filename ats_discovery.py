@@ -349,12 +349,23 @@ def fetch_amazon(company_name: str = "Amazon") -> list:
                 continue
 
             posted_str = j.get("posted_date", "")
+            posted_iso = ""
             try:
                 dt = datetime.fromisoformat(posted_str.replace("Z", "+00:00"))
+                posted_iso = dt.isoformat()
                 if not _is_fresh(dt):
                     continue
             except (ValueError, TypeError):
-                pass
+                # Amazon sometimes returns "June  3, 2026" format
+                try:
+                    import re as _re
+                    clean = _re.sub(r'\s+', ' ', posted_str).strip()
+                    dt = datetime.strptime(clean, "%B %d, %Y")
+                    posted_iso = dt.strftime("%Y-%m-%dT00:00:00+00:00")
+                    if not _is_fresh(dt):
+                        continue
+                except (ValueError, TypeError):
+                    pass
 
             jd_url = f"https://www.amazon.jobs{j.get('job_path', '')}"
             description = " ".join(filter(None, [
@@ -370,7 +381,7 @@ def fetch_amazon(company_name: str = "Amazon") -> list:
                 "job_city": j.get("normalized_location", "") or j.get("city", ""),
                 "job_country": "US",
                 "job_apply_is_direct": True,
-                "job_posted_at_datetime_utc": posted_str,
+                "job_posted_at_datetime_utc": posted_iso or posted_str,
                 "_ats": "amazon",
             })
         time.sleep(0.3)
