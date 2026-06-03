@@ -194,6 +194,8 @@ def migrate_json_to_db():
 # --- Job queries ---
 
 SORT_OPTIONS = {
+    "posted_newest": "posted_at DESC NULLS LAST, discovered_at DESC",
+    "posted_oldest": "posted_at ASC NULLS LAST, discovered_at ASC",
     "newest": "discovered_at DESC",
     "oldest": "discovered_at ASC",
     "match_desc": "match_pct DESC NULLS LAST",

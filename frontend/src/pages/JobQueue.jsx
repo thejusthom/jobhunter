@@ -70,7 +70,7 @@ export default function JobQueue() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
   const [filter, setFilter] = useState(searchParams.get('select') ? '' : 'pending')
-  const [sort, setSort] = useState('')
+  const [sort, setSort] = useState('posted_newest')
   const [selected, setSelected] = useState(null)
   const [matching, setMatching] = useState(null)
   const [matchResult, setMatchResult] = useState(null)
@@ -510,9 +510,10 @@ export default function JobQueue() {
             onChange={e => { setSort(e.target.value); setPage(0) }}
             className="bg-surface border border-border rounded-lg text-xs text-text-muted px-2 py-[7px] outline-none cursor-pointer hover:text-text-secondary hover:border-border-hover focus:border-accent/40 transition-all duration-200 shrink-0"
           >
-            <option value="">Sort</option>
-            <option value="newest">Newest</option>
-            <option value="oldest">Oldest</option>
+            <option value="posted_newest">Posted ↓</option>
+            <option value="posted_oldest">Posted ↑</option>
+            <option value="newest">Added ↓</option>
+            <option value="oldest">Added ↑</option>
             <option value="match_desc">Match ↓</option>
             <option value="match_asc">Match ↑</option>
             <option value="score_desc">Score ↓</option>
