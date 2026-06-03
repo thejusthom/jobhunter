@@ -268,7 +268,8 @@
   {
     "name": "Flexport",
     "ats": "greenhouse",
-    "slug": "flexport"
+    "slug": "flexport",
+    "linkedin_id": "3131483"
   },
   {
     "name": "Affirm",
@@ -1413,7 +1414,7 @@
     "name": "Micron",
     "ats": "workday",
     "slug": "micron",
-    "linkedin_id": "2478",
+    "linkedin_id": "3690",
     "wd_num": 1,
     "site": "External"
   },
