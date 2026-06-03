@@ -281,6 +281,7 @@ export default function JobQueue() {
   const [reminderForm, setReminderForm] = useState({ title: '', date: '', time: '10:00' })
   const [showPasteJd, setShowPasteJd] = useState(false)
   const [pasteJdText, setPasteJdText] = useState('')
+  const [contactSaved, setContactSaved] = useState(null)
 
   const openReminderForm = (job) => {
     const now = new Date()
@@ -848,27 +849,42 @@ export default function JobQueue() {
               )}
 
               {/* Contact LinkedIn */}
-              <div className="flex items-center gap-2 animate-fade-in" style={{ animationDelay: '250ms' }}>
+              <div className="flex items-center gap-1.5 animate-fade-in" style={{ animationDelay: '250ms' }}>
                 <span className="text-[11px] text-text-muted shrink-0">Contact:</span>
                 <input
                   type="text"
                   value={selected.contact_linkedin || ''}
-                  onChange={e => setSelected(prev => ({ ...prev, contact_linkedin: e.target.value }))}
-                  onBlur={e => {
-                    const val = e.target.value.trim()
-                    if (val !== (selected._savedContactLinkedin || '')) {
+                  onChange={e => { setSelected(prev => ({ ...prev, contact_linkedin: e.target.value })); setContactSaved(null) }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      const val = e.target.value.trim()
                       api.updateJob(selected.id, { contact_linkedin: val })
-                      setSelected(prev => ({ ...prev, _savedContactLinkedin: val }))
+                      setContactSaved(selected.id)
+                      setTimeout(() => setContactSaved(null), 2000)
                     }
                   }}
-                  placeholder="Paste recruiter/contact LinkedIn URL..."
-                  className="flex-1 text-[11px] bg-surface border border-border rounded-md px-2 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/40 transition-all"
+                  placeholder="Paste recruiter LinkedIn URL..."
+                  className="flex-1 text-[11px] bg-surface border border-border rounded-md px-2 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-sky-500/40 transition-all"
                 />
+                <button
+                  onClick={() => {
+                    const val = (selected.contact_linkedin || '').trim()
+                    api.updateJob(selected.id, { contact_linkedin: val })
+                    setContactSaved(selected.id)
+                    setTimeout(() => setContactSaved(null), 2000)
+                  }}
+                  className={`text-[11px] px-2 py-1 rounded-md transition-all shrink-0 ${
+                    contactSaved === selected.id
+                      ? 'bg-emerald-900/20 text-emerald-400 border border-emerald-500/20'
+                      : 'bg-sky-900/15 text-sky-400 hover:bg-sky-900/25 border border-sky-500/20'
+                  }`}>
+                  {contactSaved === selected.id ? '✓ Saved' : 'Save'}
+                </button>
                 {selected.contact_linkedin && (
                   <a href={selected.contact_linkedin.startsWith('http') ? selected.contact_linkedin : `https://${selected.contact_linkedin}`}
                     target="_blank" rel="noopener noreferrer"
-                    className="text-[11px] text-accent hover:underline shrink-0">
-                    Open
+                    className="text-[11px] text-sky-400 hover:underline shrink-0">
+                    Open ↗
                   </a>
                 )}
               </div>
