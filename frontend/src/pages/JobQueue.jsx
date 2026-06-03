@@ -252,9 +252,10 @@ export default function JobQueue() {
   const [pasteJdText, setPasteJdText] = useState('')
 
   const openReminderForm = (job) => {
-    const tomorrow = new Date()
-    tomorrow.setDate(tomorrow.getDate() + 1)
-    const dateStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`
+    const now = new Date()
+    // If it's before 10am, default to today 10am; otherwise tomorrow 10am
+    const target = now.getHours() < 10 ? now : new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+    const dateStr = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}-${String(target.getDate()).padStart(2, '0')}`
     setReminderForm({
       title: `Reach out to recruiter — ${job.title} @ ${job.company}`,
       date: dateStr,

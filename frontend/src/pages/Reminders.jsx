@@ -15,9 +15,12 @@ function formatTimeForInput(date) {
 }
 
 function getDefaultDate() {
-  const d = new Date()
-  d.setDate(d.getDate() + 1)
-  return formatDateForInput(d)
+  const now = new Date()
+  // If before 10am, default to today; otherwise tomorrow
+  if (now.getHours() >= 10) {
+    now.setDate(now.getDate() + 1)
+  }
+  return formatDateForInput(now)
 }
 
 export default function Reminders() {
