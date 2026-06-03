@@ -322,6 +322,29 @@ def _fetch_jd_from_url(url: str) -> dict:
                         except Exception as e:
                             _log(f"[fetch-jd] Greenhouse board discovery error: {e}")
 
+                        # Final fallback: strip common suffixes from board guess (e.g. pinterestcareers -> pinterest)
+                        for suffix in ["careers", "jobs", "hiring", "career", "job", "talent"]:
+                            if board_guess.endswith(suffix) and len(board_guess) > len(suffix):
+                                stripped = board_guess[:-len(suffix)]
+                                _log(f"[fetch-jd] Trying stripped board: {stripped}")
+                                try:
+                                    r3 = http_requests.get(
+                                        f"https://boards-api.greenhouse.io/v1/boards/{stripped}/jobs/{gh_jid}",
+                                        timeout=10,
+                                    )
+                                    if r3.status_code == 200:
+                                        data = r3.json()
+                                        result["title"] = data.get("title", "")
+                                        result["description"] = _strip_html(data.get("content", ""))
+                                        loc = data.get("location", {})
+                                        result["location"] = loc.get("name", "") if isinstance(loc, dict) else str(loc)
+                                        result["company"] = (data.get("company") or {}).get("name", "") or stripped.replace("-", " ").title()
+                                        result["apply_link"] = data.get("absolute_url", url)
+                                        result["ats"] = "greenhouse"
+                                        return result
+                                except Exception:
+                                    pass
+
         if gh_match:
             board = gh_match.group(1)
             job_num = gh_match.group(2)
