@@ -204,8 +204,6 @@ SORT_OPTIONS = {
     "oldest": "discovered_at ASC",
     "match_desc": "match_pct DESC NULLS LAST",
     "match_asc": "match_pct ASC NULLS LAST",
-    "score_desc": "score DESC",
-    "score_asc": "score ASC",
     "company_asc": "company COLLATE NOCASE ASC",
     "company_desc": "company COLLATE NOCASE DESC",
     "salary_desc": "salary_max DESC NULLS LAST",
