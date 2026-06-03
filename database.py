@@ -333,16 +333,21 @@ def get_evaluated_jobs(limit=20):
 def get_applications(status=None, search=None, limit=100, offset=0):
     clauses, params = [], []
     if status:
-        clauses.append("status = ?")
+        clauses.append("a.status = ?")
         params.append(status)
     if search:
-        clauses.append("(company LIKE ? OR title LIKE ?)")
+        clauses.append("(a.company LIKE ? OR a.title LIKE ?)")
         like = f"%{search}%"
         params.extend([like] * 2)
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
     params.extend([limit, offset])
     with get_db() as db:
-        rows = db.execute(f"SELECT * FROM applications {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?", params).fetchall()
+        rows = db.execute(f"""
+            SELECT a.*, j.contact_linkedin as job_contact_linkedin
+            FROM applications a
+            LEFT JOIN jobs j ON a.job_id = j.id
+            {where} ORDER BY a.updated_at DESC LIMIT ? OFFSET ?
+        """, params).fetchall()
         return [dict(r) for r in rows]
 
 

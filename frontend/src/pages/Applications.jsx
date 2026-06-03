@@ -250,6 +250,10 @@ export default function Applications() {
                 {app.apply_link && (
                   <a href={app.apply_link} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">Link</a>
                 )}
+                {app.job_contact_linkedin && (
+                  <a href={app.job_contact_linkedin.startsWith('http') ? app.job_contact_linkedin : `https://${app.job_contact_linkedin}`}
+                    target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:underline">Contact ↗</a>
+                )}
               </div>
               <div className="flex gap-1.5 mt-2 flex-wrap">
                 <button
