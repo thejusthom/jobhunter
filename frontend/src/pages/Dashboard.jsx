@@ -149,6 +149,13 @@ export default function Dashboard() {
             >
               Simplify Only
             </button>
+            <button
+              onClick={() => runDiscovery({ jsearch: false, adzuna: false })}
+              disabled={discovering}
+              className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
+            >
+              ATS + Simplify
+            </button>
           </div>
         </div>
       </div>
