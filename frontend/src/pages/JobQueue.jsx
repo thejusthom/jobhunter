@@ -112,20 +112,24 @@ export default function JobQueue() {
 
   useEffect(() => { load() }, [load])
 
-  // Auto-select job from ?select=JOB_ID query param (e.g. from Reminders page)
+  // Auto-select job from ?select=JOB_ID query param (e.g. from Reminders/notification)
   useEffect(() => {
     const selectId = searchParams.get('select')
-    if (selectId && !selected) {
+    if (selectId && selectId !== selected?.id) {
       // Try to find in current page
       const found = jobs.find(j => j.id === selectId)
       if (found) {
         setSelected(found)
-        setSearchParams({}, { replace: true }) // clear param
-      } else if (jobs.length > 0) {
+        setMatchResult(null)
+        setOutreach(null)
+        setSearchParams({}, { replace: true })
+      } else {
         // Job not in current page — fetch it directly
         api.getJob(selectId).then(job => {
           if (job) {
             setSelected(job)
+            setMatchResult(null)
+            setOutreach(null)
             setSearchParams({}, { replace: true })
           }
         }).catch(() => {})

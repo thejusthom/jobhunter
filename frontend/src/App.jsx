@@ -1,4 +1,4 @@
-import { Routes, Route, NavLink, useLocation, Link } from 'react-router-dom'
+import { Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { api } from './api'
 import Dashboard from './pages/Dashboard'
@@ -27,6 +27,7 @@ const navItems = [
 
 export default function App() {
   const location = useLocation()
+  const navigate = useNavigate()
   const [mobileNav, setMobileNav] = useState(false)
 
   useEffect(() => {
@@ -182,10 +183,13 @@ export default function App() {
                   )}
                   <div className="flex gap-2 mt-2">
                     {r.job_id && (
-                      <Link to={`/jobs?select=${r.job_id}`}
+                      <button onClick={() => {
+                          // Navigate with a unique key to force re-render even if already on /jobs
+                          navigate(`/jobs?select=${r.job_id}&t=${Date.now()}`)
+                        }}
                         className="text-xs text-accent hover:underline">
                         View Job
-                      </Link>
+                      </button>
                     )}
                     {r.job_link && (
                       <a href={r.job_link} target="_blank" rel="noopener noreferrer"
