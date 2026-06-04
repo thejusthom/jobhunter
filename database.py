@@ -463,6 +463,22 @@ def complete_reminder(reminder_id):
         db.execute("UPDATE reminders SET completed = 1 WHERE id = ?", (reminder_id,))
 
 
+def update_reminder(reminder_id, **fields):
+    allowed = {"title", "due_date"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    params = list(updates.values()) + [reminder_id]
+    with get_db() as db:
+        db.execute(f"UPDATE reminders SET {set_clause} WHERE id = ?", params)
+
+
+def delete_reminder(reminder_id):
+    with get_db() as db:
+        db.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+
+
 def delete_non_us_jobs():
     from ats_discovery import _is_us_location
     with get_db() as conn:

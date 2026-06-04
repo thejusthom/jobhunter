@@ -44,6 +44,8 @@ export const api = {
   getDueReminders: () => request('/reminders/due'),
   createReminder: (data) => request('/reminders', { method: 'POST', body: JSON.stringify(data) }),
   completeReminder: (id) => request(`/reminders/${id}/complete`, { method: 'PATCH' }),
+  updateReminder: (id, data) => request(`/reminders/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteReminder: (id) => request(`/reminders/${id}`, { method: 'DELETE' }),
 
   getDashboard: () => request('/dashboard'),
   triggerDiscovery: (data = {}) => request('/discover', { method: 'POST', body: JSON.stringify(data) }),

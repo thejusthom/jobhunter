@@ -29,6 +29,8 @@ export default function Reminders() {
   const [showAll, setShowAll] = useState(false)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ title: '', date: getDefaultDate(), time: '10:00', application_id: '' })
+  const [editing, setEditing] = useState(null)
+  const [editForm, setEditForm] = useState({ title: '', date: '', time: '' })
 
   const load = () => {
     setLoading(true)
@@ -44,6 +46,27 @@ export default function Reminders() {
     await api.createReminder(data)
     setForm({ title: '', date: getDefaultDate(), time: '10:00', application_id: '' })
     setShowForm(false)
+    load()
+  }
+
+  const startEdit = (r) => {
+    setEditing(r.id)
+    setEditForm({
+      title: r.title,
+      date: formatDateForInput(r.due_date),
+      time: formatTimeForInput(r.due_date),
+    })
+  }
+
+  const saveEdit = async (id) => {
+    const due_date = `${editForm.date}T${editForm.time}:00`
+    await api.updateReminder(id, { title: editForm.title, due_date })
+    setEditing(null)
+    load()
+  }
+
+  const handleDelete = async (id) => {
+    await api.deleteReminder(id)
     load()
   }
 
@@ -126,9 +149,10 @@ export default function Reminders() {
       ) : (
         <div className="space-y-1.5">
           {reminders.map(r => (
-            <div key={r.id} className={`bg-surface-raised border rounded-lg p-3.5 flex items-center justify-between transition-all duration-150 ${
+            <div key={r.id} className={`bg-surface-raised border rounded-lg p-3.5 transition-all duration-150 ${
               r.completed ? 'border-border opacity-50' : isOverdue(r.due_date) ? 'border-danger/40' : 'border-border hover:border-border-hover'
             }`}>
+             <div className="flex items-center justify-between">
               <div className="min-w-0 flex-1">
                 <div className={`font-medium text-sm ${r.completed ? 'text-text-muted line-through' : 'text-text-primary'}`}>
                   {r.title}
@@ -158,12 +182,43 @@ export default function Reminders() {
                 )}
               </div>
               {!r.completed && (
-                <button
-                  onClick={() => complete(r.id)}
-                  className="bg-accent hover:bg-accent-hover text-white font-medium text-xs px-3 py-1.5 rounded-lg transition-all duration-150"
-                >
-                  Done
-                </button>
+                <div className="flex gap-1.5 shrink-0 ml-3">
+                  <button onClick={() => editing === r.id ? setEditing(null) : startEdit(r)}
+                    className="text-xs px-2 py-1 rounded-md bg-surface-overlay hover:bg-border text-text-muted hover:text-text-secondary border border-border transition-all">
+                    {editing === r.id ? 'Cancel' : 'Edit'}
+                  </button>
+                  <button onClick={() => complete(r.id)}
+                    className="bg-accent hover:bg-accent-hover text-white font-medium text-xs px-3 py-1.5 rounded-lg transition-all duration-150">
+                    Done
+                  </button>
+                  <button onClick={() => handleDelete(r.id)}
+                    className="text-xs px-2 py-1 rounded-md text-danger/60 hover:text-danger bg-red-900/10 transition-all">
+                    ✕
+                  </button>
+                </div>
+              )}
+             </div>{/* end flex row */}
+              {editing === r.id && (
+                <div className="mt-2 pt-2 border-t border-border animate-fade-in">
+                  <input
+                    value={editForm.title}
+                    onChange={e => setEditForm({ ...editForm, title: e.target.value })}
+                    className={`w-full mb-2 ${inputClass}`}
+                    placeholder="Reminder title"
+                  />
+                  <div className="flex gap-2 items-center">
+                    <input type="date" value={editForm.date}
+                      onChange={e => setEditForm({ ...editForm, date: e.target.value })}
+                      className={`flex-1 ${inputClass}`} />
+                    <input type="time" value={editForm.time}
+                      onChange={e => setEditForm({ ...editForm, time: e.target.value })}
+                      className={`w-28 ${inputClass}`} />
+                    <button onClick={() => saveEdit(r.id)}
+                      className="bg-accent hover:bg-accent-hover text-white font-medium text-xs px-4 py-2 rounded-lg transition-all shrink-0">
+                      Save
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           ))}

@@ -851,6 +851,20 @@ def complete_reminder(reminder_id: int):
     db.complete_reminder(reminder_id)
     return {"ok": True}
 
+class ReminderUpdate(BaseModel):
+    title: str | None = None
+    due_date: str | None = None
+
+@app.patch("/api/reminders/{reminder_id}")
+def update_reminder(reminder_id: int, body: ReminderUpdate):
+    db.update_reminder(reminder_id, **body.model_dump(exclude_none=True))
+    return {"ok": True}
+
+@app.delete("/api/reminders/{reminder_id}")
+def delete_reminder(reminder_id: int):
+    db.delete_reminder(reminder_id)
+    return {"ok": True}
+
 
 # ---------------------------------------------------------------------------
 # Discovery endpoint (runs in background)
