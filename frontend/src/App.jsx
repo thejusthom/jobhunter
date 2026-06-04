@@ -149,67 +149,73 @@ export default function App() {
             </button>
 
             {showReminderDropdown && (
-              <div className="absolute right-0 top-full mt-1 w-80 bg-surface-raised border border-border rounded-xl shadow-2xl shadow-black/40 z-50 animate-fade-in overflow-hidden">
+              <div className="absolute right-0 top-full mt-1 w-96 bg-surface-raised border border-border rounded-xl shadow-2xl shadow-black/40 z-50 animate-fade-in overflow-hidden">
                 <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-                  <span className="text-sm font-medium text-text-primary">Reminders</span>
-                  <button onClick={() => navigate('/reminders')} className="text-xs text-accent hover:underline">View All</button>
+                  <span className="text-sm font-semibold text-text-primary">Reminders</span>
+                  <button onClick={() => { navigate('/reminders'); setShowReminderDropdown(false) }} className="text-xs text-accent hover:underline">View All</button>
                 </div>
-                <div className="max-h-80 overflow-y-auto">
+                <div className="max-h-96 overflow-y-auto">
                   {visibleReminders.length > 0 && (
-                    <div className="px-3 pt-2 pb-1">
-                      <span className="text-[10px] uppercase tracking-wider text-amber-400 font-semibold">Due Now</span>
+                    <div className="px-4 pt-3 pb-1">
+                      <span className="text-xs uppercase tracking-wider text-amber-400 font-semibold">Due Now</span>
                     </div>
                   )}
                   {visibleReminders.map(r => (
-                    <div key={r.id} className="px-3 py-2.5 border-b border-border/50 hover:bg-surface-overlay/50 transition-colors">
-                      <div className="flex items-start justify-between gap-2">
+                    <div key={r.id} className="px-4 py-3 border-b border-border/50 hover:bg-surface-overlay/50 transition-colors">
+                      <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
-                          <div className="text-xs font-medium text-text-primary truncate">{r.title}</div>
+                          <div className="text-sm font-medium text-text-primary">{r.title}</div>
                           {(r.job_company || r.app_company) && (
-                            <div className="text-[11px] text-text-tertiary truncate">
+                            <div className="text-xs text-text-tertiary mt-0.5">
                               {r.job_company || r.app_company}
                               {(r.job_title || r.app_title) && ` — ${r.job_title || r.app_title}`}
                             </div>
                           )}
-                          <div className="flex gap-2 mt-1">
+                          <div className="flex gap-3 mt-1.5">
                             {r.job_id && (
                               <button onClick={() => { navigate(`/jobs?select=${r.job_id}&t=${Date.now()}`); setShowReminderDropdown(false) }}
-                                className="text-[10px] text-accent hover:underline">View Job</button>
+                                className="text-xs text-accent hover:underline">View Job</button>
                             )}
                             {r.job_link && (
                               <a href={r.job_link} target="_blank" rel="noopener noreferrer"
-                                className="text-[10px] text-blue-400 hover:underline">Apply</a>
+                                className="text-xs text-blue-400 hover:underline">Apply</a>
                             )}
                           </div>
                         </div>
                         <button onClick={() => dismissReminder(r.id)}
-                          className="text-[10px] px-1.5 py-0.5 bg-amber-600 hover:bg-amber-500 text-white rounded transition-all shrink-0">
+                          className="text-xs px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded-md transition-all shrink-0 font-medium">
                           Done
                         </button>
                       </div>
                     </div>
                   ))}
                   {upcomingReminders.filter(r => !visibleReminders.some(v => v.id === r.id)).length > 0 && (
-                    <div className="px-3 pt-2 pb-1">
-                      <span className="text-[10px] uppercase tracking-wider text-text-muted font-semibold">Upcoming</span>
+                    <div className="px-4 pt-3 pb-1">
+                      <span className="text-xs uppercase tracking-wider text-text-muted font-semibold">Upcoming</span>
                     </div>
                   )}
                   {upcomingReminders
                     .filter(r => !visibleReminders.some(v => v.id === r.id))
                     .slice(0, 10)
                     .map(r => (
-                    <div key={r.id} className="px-3 py-2 border-b border-border/30 hover:bg-surface-overlay/50 transition-colors">
-                      <div className="flex items-start justify-between gap-2">
+                    <div key={r.id} className="px-4 py-2.5 border-b border-border/30 hover:bg-surface-overlay/50 transition-colors">
+                      <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0 flex-1">
-                          <div className="text-xs text-text-secondary truncate">{r.title}</div>
-                          <div className="text-[10px] text-text-muted">
+                          <div className="text-sm text-text-secondary truncate">{r.title}</div>
+                          <div className="text-xs text-text-muted">
                             {new Date(r.due_date).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                           </div>
                         </div>
-                        {r.job_id && (
-                          <button onClick={() => { navigate(`/jobs?select=${r.job_id}&t=${Date.now()}`); setShowReminderDropdown(false) }}
-                            className="text-[10px] text-accent hover:underline shrink-0">View</button>
-                        )}
+                        <div className="flex gap-2 shrink-0">
+                          {r.job_id && (
+                            <button onClick={() => { navigate(`/jobs?select=${r.job_id}&t=${Date.now()}`); setShowReminderDropdown(false) }}
+                              className="text-xs text-accent hover:underline">View</button>
+                          )}
+                          <button onClick={() => dismissReminder(r.id)}
+                            className="text-xs px-2 py-0.5 bg-surface-overlay hover:bg-border text-text-muted hover:text-text-secondary rounded-md border border-border transition-all">
+                            Done
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
