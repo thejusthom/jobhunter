@@ -282,9 +282,18 @@ export default function App() {
       </main>
 
       {/* Reminder popup toasts */}
-      {visibleReminders.length > 0 && (
+      {visibleReminders.length > 0 && !showReminderDropdown && (
         <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm animate-fade-in-up">
-          {visibleReminders.map(r => (
+          <div className="flex justify-end">
+            <button onClick={() => setDismissedIds(prev => new Set([...prev, ...visibleReminders.map(r => r.id)]))}
+              className="text-xs text-text-muted hover:text-text-secondary bg-surface-raised/80 backdrop-blur px-2.5 py-1 rounded-md border border-border transition-all">
+              Dismiss All
+            </button>
+          </div>
+          {visibleReminders.length > 3 && (
+            <div className="text-xs text-text-muted text-right">+{visibleReminders.length - 3} more in bell menu</div>
+          )}
+          {visibleReminders.slice(0, 3).map(r => (
             <div key={r.id} className="bg-surface-raised border border-amber-500/30 rounded-xl p-4 shadow-2xl shadow-black/40 animate-scale-in">
               <div className="flex items-start gap-3">
                 <span className="text-amber-400 text-lg shrink-0 mt-0.5">&#128276;</span>
@@ -298,10 +307,7 @@ export default function App() {
                   )}
                   <div className="flex gap-2 mt-2">
                     {r.job_id && (
-                      <button onClick={() => {
-                          // Navigate with a unique key to force re-render even if already on /jobs
-                          navigate(`/jobs?select=${r.job_id}&t=${Date.now()}`)
-                        }}
+                      <button onClick={() => navigate(`/jobs?select=${r.job_id}&t=${Date.now()}`)}
                         className="text-xs text-accent hover:underline">
                         View Job
                       </button>
@@ -321,6 +327,14 @@ export default function App() {
                     )}
                   </div>
                 </div>
+                <div className="flex flex-col gap-1 shrink-0">
+                  <button onClick={() => setDismissedIds(prev => new Set([...prev, r.id]))}
+                    className="text-text-muted hover:text-text-secondary text-lg leading-none transition-colors" title="Dismiss">
+                    &times;
+                  </button>
+                </div>
+              </div>
+              <div className="flex gap-2 mt-2 pt-2 border-t border-border/30">
                 <button onClick={() => dismissReminder(r.id)}
                   className="text-xs px-2 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded-md transition-all shrink-0">
                   Done
