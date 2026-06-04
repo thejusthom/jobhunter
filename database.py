@@ -439,7 +439,7 @@ def get_due_reminders():
             FROM reminders r
             LEFT JOIN applications a ON r.application_id = a.id
             LEFT JOIN jobs j ON r.job_id = j.id
-            WHERE r.completed = 0 AND r.due_date <= datetime('now')
+            WHERE r.completed = 0 AND r.due_date <= datetime('now', 'localtime')
             ORDER BY r.due_date ASC
         """).fetchall()
         return [dict(r) for r in rows]
