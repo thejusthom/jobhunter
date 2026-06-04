@@ -21,6 +21,7 @@ const navItems = [
   { to: '/recruiters', label: 'Recruiters' },
   { to: '/emails', label: 'Emails' },
   { to: '/apply', label: 'Auto Apply' },
+  { to: '/reminders', label: 'Reminders' },
   { to: '/settings', label: 'Settings' },
 ]
 
