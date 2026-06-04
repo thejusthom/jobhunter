@@ -102,8 +102,8 @@ export default function App() {
     } catch (_) {}
   }
 
-  const visibleReminders = dueReminders.filter(r => !dismissedIds.has(r.id))
-  const upcomingReminders = allReminders.filter(r => !dismissedIds.has(r.id))
+  const visibleReminders = allReminders.filter(r => !dismissedIds.has(r.id) && new Date(r.due_date) <= new Date())
+  const upcomingReminders = allReminders.filter(r => !dismissedIds.has(r.id) && new Date(r.due_date) > new Date())
 
   return (
     <div className="min-h-screen bg-[#0f0f0f] text-text-primary">
@@ -157,7 +157,7 @@ export default function App() {
                 <div className="max-h-96 overflow-y-auto">
                   {visibleReminders.length > 0 && (
                     <div className="px-4 pt-3 pb-1">
-                      <span className="text-xs uppercase tracking-wider text-amber-400 font-semibold">Due Now</span>
+                      <span className="text-xs uppercase tracking-wider text-amber-400 font-semibold">Overdue</span>
                     </div>
                   )}
                   {visibleReminders.map(r => (
@@ -189,13 +189,12 @@ export default function App() {
                       </div>
                     </div>
                   ))}
-                  {upcomingReminders.filter(r => !visibleReminders.some(v => v.id === r.id)).length > 0 && (
+                  {upcomingReminders.length > 0 && (
                     <div className="px-4 pt-3 pb-1">
                       <span className="text-xs uppercase tracking-wider text-text-muted font-semibold">Upcoming</span>
                     </div>
                   )}
                   {upcomingReminders
-                    .filter(r => !visibleReminders.some(v => v.id === r.id))
                     .slice(0, 10)
                     .map(r => (
                     <div key={r.id} className="px-4 py-2.5 border-b border-border/30 hover:bg-surface-overlay/50 transition-colors">
