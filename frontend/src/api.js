@@ -66,6 +66,12 @@ export const api = {
   addJobByUrl: (url) => request('/jobs/add-by-url', { method: 'POST', body: JSON.stringify({ url }) }),
   fixWorkdayUrls: () => request('/jobs/fix-workday-urls', { method: 'POST' }),
 
+  // Scheduled Discoveries
+  getScheduledDiscoveries: () => request('/scheduled-discoveries'),
+  createScheduledDiscovery: (data) => request('/scheduled-discoveries', { method: 'POST', body: JSON.stringify(data) }),
+  updateScheduledDiscovery: (id, data) => request(`/scheduled-discoveries/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteScheduledDiscovery: (id) => request(`/scheduled-discoveries/${id}`, { method: 'DELETE' }),
+
   // Auto-Apply Engine
   autoApplyStart: (data = {}) => request('/auto-apply/start', { method: 'POST', body: JSON.stringify(data) }),
   autoApplyStatus: () => request('/auto-apply/status'),
