@@ -138,6 +138,8 @@ def init_db():
             db.execute("ALTER TABLE jobs ADD COLUMN outreach_full TEXT DEFAULT NULL")
         if "outreach_short" not in cols:
             db.execute("ALTER TABLE jobs ADD COLUMN outreach_short TEXT DEFAULT NULL")
+        if "outreach_short_hm" not in cols:
+            db.execute("ALTER TABLE jobs ADD COLUMN outreach_short_hm TEXT DEFAULT NULL")
         if "resume_scores" not in cols:
             db.execute("ALTER TABLE jobs ADD COLUMN resume_scores TEXT DEFAULT NULL")
         if "matched_keywords" not in cols:
@@ -155,6 +157,24 @@ def init_db():
         # Add contact_linkedin column to jobs if missing
         if "contact_linkedin" not in cols:
             db.execute("ALTER TABLE jobs ADD COLUMN contact_linkedin TEXT DEFAULT NULL")
+
+        # Add email_used column to applications if missing
+        app_cols = {r[1] for r in db.execute("PRAGMA table_info(applications)").fetchall()}
+        if "email_used" not in app_cols:
+            db.execute("ALTER TABLE applications ADD COLUMN email_used TEXT DEFAULT 'thomsonthejus@gmail.com'")
+
+        # Scheduled discovery table
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS scheduled_discoveries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                cron_hours TEXT NOT NULL DEFAULT '9',
+                sources TEXT NOT NULL DEFAULT 'simplify',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                last_run TEXT DEFAULT NULL,
+                created_at TEXT DEFAULT (datetime('now', 'localtime'))
+            )
+        """)
 
 
 def migrate_json_to_db():
@@ -238,7 +258,7 @@ def get_job(job_id):
 
 
 def update_job(job_id, **fields):
-    allowed = {"status", "notes", "match_pct", "match_summary", "team", "project", "recommended_resume", "resume_scores", "matched_keywords", "outreach_full", "outreach_short", "description", "salary_min", "salary_max", "title", "company", "location", "ats", "apply_link", "contact_linkedin"}
+    allowed = {"status", "notes", "match_pct", "match_summary", "team", "project", "recommended_resume", "resume_scores", "matched_keywords", "outreach_full", "outreach_short", "outreach_short_hm", "description", "salary_min", "salary_max", "title", "company", "location", "ats", "apply_link", "contact_linkedin"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
@@ -312,6 +332,39 @@ def kv_set(key: str, value: str):
         )
 
 
+# --- Scheduled Discoveries ---
+
+def get_scheduled_discoveries():
+    with get_db() as db:
+        rows = db.execute("SELECT * FROM scheduled_discoveries ORDER BY id").fetchall()
+        return [dict(r) for r in rows]
+
+
+def create_scheduled_discovery(name: str, cron_hours: str, sources: str):
+    with get_db() as db:
+        db.execute(
+            "INSERT INTO scheduled_discoveries (name, cron_hours, sources) VALUES (?, ?, ?)",
+            (name, cron_hours, sources),
+        )
+        return db.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+
+def update_scheduled_discovery(sd_id: int, **kwargs):
+    allowed = {"name", "cron_hours", "sources", "enabled", "last_run"}
+    fields = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+    if not fields:
+        return
+    sets = ", ".join(f"{k} = ?" for k in fields)
+    vals = list(fields.values()) + [sd_id]
+    with get_db() as db:
+        db.execute(f"UPDATE scheduled_discoveries SET {sets} WHERE id = ?", vals)
+
+
+def delete_scheduled_discovery(sd_id: int):
+    with get_db() as db:
+        db.execute("DELETE FROM scheduled_discoveries WHERE id = ?", (sd_id,))
+
+
 def get_job_stats():
     with get_db() as db:
         rows = db.execute("SELECT status, COUNT(*) as count FROM jobs GROUP BY status").fetchall()
@@ -355,20 +408,21 @@ def create_application(**fields):
     now = datetime.now(timezone.utc).isoformat()
     with get_db() as db:
         cursor = db.execute("""
-            INSERT INTO applications (job_id, title, company, location, apply_link, status, applied_at, updated_at, source, salary_min, salary_max, notes, resume_used)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO applications (job_id, title, company, location, apply_link, status, applied_at, updated_at, source, salary_min, salary_max, notes, resume_used, email_used)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             fields.get("job_id"), fields.get("title", ""), fields.get("company", ""),
             fields.get("location", ""), fields.get("apply_link", ""),
             fields.get("status", "applied"), fields.get("applied_at") or now, now,
             fields.get("source", "manual"), fields.get("salary_min"),
             fields.get("salary_max"), fields.get("notes", ""), fields.get("resume_used", ""),
+            fields.get("email_used", "thomsonthejus@gmail.com"),
         ))
         return cursor.lastrowid
 
 
 def update_application(app_id, **fields):
-    allowed = {"status", "notes", "salary_min", "salary_max", "resume_used"}
+    allowed = {"status", "notes", "salary_min", "salary_max", "resume_used", "email_used"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
