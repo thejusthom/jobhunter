@@ -247,6 +247,7 @@ export default function Applications() {
                 <span>Source: {app.source}</span>
                 {app.salary_min && <span>Salary: ${app.salary_min.toLocaleString()}{app.salary_max ? ` - $${app.salary_max.toLocaleString()}` : '+'}</span>}
                 {app.resume_used && <span className="text-accent/70">Resume: {app.resume_used}</span>}
+                {app.email_used && <span className="text-sky-400/70">Email: {app.email_used.split('@')[0]}</span>}
                 {app.apply_link && (
                   <a href={app.apply_link} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">Link</a>
                 )}
