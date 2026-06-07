@@ -35,10 +35,58 @@ from resume_selector import get_resume_type, get_resume_text, RESUME_KEYWORDS
 from auto_apply_engine import engine as auto_apply_engine
 
 
+import threading
+
+def _scheduler_loop():
+    """Background thread that runs scheduled discoveries at configured hours."""
+    import time
+    _log("[scheduler] Background scheduler started")
+    while True:
+        try:
+            schedules = db.get_scheduled_discoveries()
+            now = datetime.now()
+            current_hour = now.hour
+            today_str = now.strftime("%Y-%m-%d")
+
+            for sched in schedules:
+                if not sched.get("enabled"):
+                    continue
+                hours = [int(h.strip()) for h in sched["cron_hours"].split(",") if h.strip().isdigit()]
+                if current_hour not in hours:
+                    continue
+                # Check if already ran today at this hour
+                last_run = sched.get("last_run") or ""
+                if last_run.startswith(today_str + f"T{current_hour:02d}"):
+                    continue
+
+                _log(f"[scheduler] Running scheduled discovery: {sched['name']}")
+                sources = [s.strip() for s in sched["sources"].split(",")]
+                try:
+                    _run_discovery(
+                        queries=None,
+                        location="United States",
+                        skip_jsearch="jsearch" not in sources,
+                        skip_ats="ats" not in sources,
+                        skip_adzuna="adzuna" not in sources,
+                        skip_simplify="simplify" not in sources,
+                        freshness_hours=24,
+                    )
+                    db.update_scheduled_discovery(sched["id"], last_run=now.isoformat())
+                    _log(f"[scheduler] Completed: {sched['name']}")
+                except Exception as e:
+                    _log(f"[scheduler] Error running {sched['name']}: {e}")
+        except Exception as e:
+            _log(f"[scheduler] Loop error: {e}")
+        time.sleep(300)  # Check every 5 minutes
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
     db.migrate_json_to_db()
+    # Start background scheduler
+    t = threading.Thread(target=_scheduler_loop, daemon=True)
+    t.start()
     yield
 
 app = FastAPI(title="JobHunter", lifespan=lifespan)
@@ -77,6 +125,7 @@ class ApplicationCreate(BaseModel):
     salary_max: int | None = None
     notes: str = ""
     resume_used: str = ""
+    email_used: str = "thomsonthejus@gmail.com"
 
 class ApplicationUpdate(BaseModel):
     status: str | None = None
@@ -84,6 +133,7 @@ class ApplicationUpdate(BaseModel):
     salary_min: int | None = None
     salary_max: int | None = None
     resume_used: str | None = None
+    email_used: str | None = None
 
 class RecruiterCreate(BaseModel):
     name: str
@@ -152,6 +202,17 @@ def get_job(job_id: str):
     job = db.get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
+    # Auto-fetch JD if missing but apply_link exists
+    if not job.get("description") and job.get("apply_link"):
+        try:
+            fetched = _fetch_jd_from_url(job["apply_link"])
+            desc = fetched.get("description", "").strip()
+            if desc:
+                db.update_job(job_id, description=desc)
+                job["description"] = desc
+                _log(f"[auto-jd] Fetched JD for {job_id[:8]} on view ({len(desc)} chars)")
+        except Exception as e:
+            _log(f"[auto-jd] Failed for {job_id[:8]}: {e}")
     return _parse_json_fields(job)
 
 @app.patch("/api/jobs/{job_id}")
@@ -256,6 +317,36 @@ def _fetch_jd_from_url(url: str) -> dict:
                 result["apply_link"] = info.get("externalUrl") or url
                 result["ats"] = "workday"
                 return result
+            else:
+                _log(f"[fetch-jd] Workday API returned {r.status_code} for {slug}, falling back to OG tags")
+                # Workday API blocked — extract what we can from the URL path and OG tags
+                result["ats"] = "workday"
+                result["company"] = slug.replace("-", " ").title()
+                # Parse title from URL path: /Software-Engineer-I_R18788 -> Software Engineer I
+                path_part = ext_path.rsplit("/", 1)[-1] if "/" in ext_path else ext_path
+                path_title = path_part.split("_")[0].replace("-", " ").strip()
+                if path_title:
+                    result["title"] = path_title
+                # Try OG tags from the HTML page
+                try:
+                    page_r = http_requests.get(url, timeout=10, headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    })
+                    if page_r.status_code == 200:
+                        og_title = re.search(r'property="og:title"\s+content="([^"]+)"', page_r.text, re.I)
+                        og_desc = re.search(r'property="og:description"\s+content="([^"]+)"', page_r.text, re.I)
+                        if og_title:
+                            result["title"] = html.unescape(og_title.group(1).strip())
+                        if og_desc:
+                            result["description"] = html.unescape(og_desc.group(1).strip())
+                except Exception:
+                    pass
+                # Extract location from URL path if present
+                loc_match = re.search(r'/job/([^/]+)/', ext_path)
+                if loc_match:
+                    result["location"] = loc_match.group(1).replace("-", " ")
+                if result["title"]:
+                    return result
 
         # --- Greenhouse ---
         gh_match = re.match(
@@ -1212,7 +1303,7 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
         discovery_status["phase"] = "Fetching missing descriptions..."
         try:
             no_desc_jobs = db.get_db().execute(
-                "SELECT id, apply_link FROM jobs WHERE (description IS NULL OR description = '') AND apply_link != '' AND status = 'pending' LIMIT 20"
+                "SELECT id, apply_link FROM jobs WHERE (description IS NULL OR description = '') AND apply_link != '' AND status = 'pending' LIMIT 50"
             ).fetchall()
             for nj in no_desc_jobs:
                 try:
@@ -1532,10 +1623,11 @@ def generate_outreach(job_id: str, req: OutreachRequest = None):
 
     # Return cached outreach if available and no custom context provided
     has_custom = req and (req.recruiter_name or req.linkedin_post)
-    if not has_custom and job.get("outreach_full") and job.get("outreach_short"):
+    if not has_custom and job.get("outreach_full") and job.get("outreach_short") and job.get("outreach_short_hm"):
         return {
             "full": job["outreach_full"],
             "short": job["outreach_short"],
+            "short_hm": job["outreach_short_hm"],
             "job_title": job.get("title", ""),
             "company": job.get("company", ""),
             "cached": True,
@@ -1557,7 +1649,7 @@ def generate_outreach(job_id: str, req: OutreachRequest = None):
     linkedin_post = (req.linkedin_post or "").strip() if req else ""
 
     system_prompt = (
-        "You generate LinkedIn recruiter outreach messages for a job applicant.\n\n"
+        "You generate LinkedIn outreach messages for a job applicant.\n\n"
         "CANDIDATE PROFILE:\n"
         "- MS in Software Engineering Systems (Northeastern, graduated Dec 2025)\n"
         "- 3+ years professional experience at IBM (Associate + Application Developer)\n"
@@ -1565,26 +1657,41 @@ def generate_outreach(job_id: str, req: OutreachRequest = None):
         "- Strong: Java/Spring Boot, Python, React/TypeScript, Node.js, LLM/RAG/agents\n"
         "- Built full stack apps, AI pipelines, distributed systems\n\n"
         "STRICT RULES:\n"
-        "1. Generate TWO versions: a full message (150-250 words) and a short version (STRICTLY under 260 characters, leave room for salutations)\n"
-        "2. SHORT VERSION OPENING (follow EXACTLY, do NOT add extra words before 'I applied'):\n"
+        "1. Generate THREE versions:\n"
+        "   a) FULL: A detailed recruiter message (150-250 words)\n"
+        "   b) SHORT (for recruiters): Under 260 chars. Focus on YOU as a candidate, your fit, your background, offer to share resume.\n"
+        "   c) SHORT_HM (for engineering leaders/people at the company): Under 260 chars. You DON'T know if this person is the hiring manager or even on the same team. Be open-ended and curious, NOT assumptive.\n\n"
+        "2. SHORT (recruiter) OPENING (follow EXACTLY):\n"
         "   With recruiter name: 'Hey [Name]! Wanted to put a face to my resume! I applied for the [role] role.'\n"
         "   Without recruiter name: 'Hey! Wanted to put a face to my resume! I applied for the [role] role.'\n"
-        "   CRITICAL: Do NOT add the word 'just' anywhere. 'Just wanted' is BANNED. Write 'Wanted to' not 'Just wanted to'.\n"
-        "3. Always mention that you applied\n"
-        "4. Include a human touch and offer to share resume\n"
-        "5. Reference something SPECIFIC from the JD or LinkedIn post\n"
-        "6. Be VERY optimistic about the match\n"
-        "7. NEVER mention visa, OPT, sponsorship, work authorization, or immigration status\n"
-        "8. BANNED WORDS (never use): resonated, resonate, stood out, thrills, thrilled, excited to, "
+        "3. SHORT_HM (leader/engineer) RULES:\n"
+        "   With name: 'Hey [Name]! I applied for the [role] role at [company].'\n"
+        "   Without name: 'Hey! I applied for the [role] role at [company].'\n"
+        "   CRITICAL RULES for SHORT_HM:\n"
+        "   - Do NOT say 'on your team' — you don't know if it's their team\n"
+        "   - Do NOT ask about specific frameworks or tech stack details — it sounds robotic\n"
+        "   - Instead ask something broad and genuine like 'Would love to hear what it is like working there' or 'Curious to learn more about the engineering culture'\n"
+        "   - If the JD mentions a specific team name, you can ask 'Is this the [team] you work with?' but ONLY if team is explicitly named\n"
+        "   - If NO team is mentioned in the JD, do NOT mention any team at all\n"
+        "   - End with 'Would love to connect!' or similar warm closer\n"
+        "   - Keep it SHORT and casual — 2-3 sentences max after the opening\n"
+        "4. CRITICAL: Do NOT add the word 'just' anywhere. 'Just wanted' is BANNED. Write 'Wanted to' not 'Just wanted to'.\n"
+        "5. Always mention that you applied\n"
+        "6. Include a human touch\n"
+        "7. Reference something SPECIFIC from the JD or LinkedIn post\n"
+        "8. Be VERY optimistic about the match\n"
+        "9. NEVER mention visa, OPT, sponsorship, work authorization, or immigration status\n"
+        "10. BANNED WORDS (never use): resonated, resonate, stood out, thrills, thrilled, excited to, "
         "passionate about, delighted, I wanted to reach out, stood out to me\n"
-        "9. NO hyphens, dashes, em dashes, or en dashes ANYWHERE. This is the highest priority rule.\n"
-        "10. Must sound like a real human wrote it, not AI. Be casual and natural.\n"
-        "11. No AI sounding words or corporate buzzwords\n"
-        "12. If a LinkedIn post is provided, acknowledge something specific from it and mirror the poster's tone\n\n"
+        "11. NO hyphens, dashes, em dashes, or en dashes ANYWHERE. This is the highest priority rule.\n"
+        "12. Must sound like a real human wrote it, not AI. Be casual and natural.\n"
+        "13. No AI sounding words or corporate buzzwords\n"
+        "14. If a LinkedIn post is provided, acknowledge something specific from it and mirror the poster's tone\n\n"
         "Respond with ONLY a valid JSON object (no markdown fences):\n"
         "{\n"
-        '  "full": "<the full message, 150-250 words>",\n'
-        '  "short": "<the short version, MUST be under 260 characters>"\n'
+        '  "full": "<the full recruiter message, 150-250 words>",\n'
+        '  "short": "<short recruiter version, MUST be under 260 characters>",\n'
+        '  "short_hm": "<short hiring manager version, MUST be under 260 characters>"\n'
         "}"
     )
 
@@ -1614,25 +1721,32 @@ def generate_outreach(job_id: str, req: OutreachRequest = None):
     if not result or "full" not in result or "short" not in result:
         raise HTTPException(502, "Could not parse outreach messages")
 
+    # Backfill short_hm if LLM didn't return it (shouldn't happen, but just in case)
+    if "short_hm" not in result:
+        result["short_hm"] = result["short"]
+
     # Enforce no dashes (highest priority rule)
-    for key in ("full", "short"):
+    for key in ("full", "short", "short_hm"):
         result[key] = result[key].replace("—", " ").replace("–", " ").replace("-", " ")
 
-    # Strip "just" from short version opening — LLM keeps adding it despite instructions
+    # Strip "just" from short version openings — LLM keeps adding it despite instructions
     import re
-    result["short"] = re.sub(r'^(Hey[^!]*!) *[Jj]ust wanted', r'\1 Wanted', result["short"])
-    result["short"] = re.sub(r'[Jj]ust wanted to put', 'Wanted to put', result["short"])
+    for key in ("short", "short_hm"):
+        result[key] = re.sub(r'^(Hey[^!]*!) *[Jj]ust wanted', r'\1 Wanted', result[key])
+        result[key] = re.sub(r'[Jj]ust wanted to put', 'Wanted to put', result[key])
 
-    # Log if short version exceeds target (LLM should handle length)
-    if len(result["short"]) > 260:
-        _log(f"[outreach] Short version is {len(result['short'])} chars (target: 260)")
+    # Log if short versions exceed target
+    for key in ("short", "short_hm"):
+        if len(result[key]) > 260:
+            _log(f"[outreach] {key} is {len(result[key])} chars (target: 260)")
 
     # Persist to DB
-    db.update_job(job_id, outreach_full=result["full"], outreach_short=result["short"])
+    db.update_job(job_id, outreach_full=result["full"], outreach_short=result["short"], outreach_short_hm=result["short_hm"])
 
     return {
         "full": result["full"],
         "short": result["short"],
+        "short_hm": result["short_hm"],
         "job_title": title,
         "company": company,
     }
@@ -1824,12 +1938,20 @@ def linkedin_leaders(job_id: str, role: str = "hiring"):
             title_terms = f"software engineer {team_hint}"
         else:
             title_terms = "senior software engineer"
+    elif role == "posts":
+        # LinkedIn posts about hiring for this role
+        post_query = f"{company} hiring {title.split(',')[0].split(' - ')[0].strip()}"
+        post_url = "https://www.linkedin.com/search/results/content/?"
+        post_url += f"keywords={urllib.parse.quote(post_query)}"
+        post_url += "&datePosted=%22past-week%22"
+        post_url += "&origin=FACETED_SEARCH"
+        return {"url": post_url, "query": post_query, "company": company, "role": role}
     else:
-        # Find hiring decision makers
+        # Find engineering leaders / decision makers
         if team_hint:
-            title_terms = f"engineering manager {team_hint}"
+            title_terms = f"engineering leader OR engineering director OR engineering manager {team_hint}"
         else:
-            title_terms = "engineering manager"
+            title_terms = "engineering leader OR engineering director OR VP engineering"
 
     # If we have verified company ID, don't waste keywords on company name
     if linkedin_id and verified:
@@ -1984,6 +2106,44 @@ def block_company(body: BlockCompanyRequest):
 @app.delete("/api/blocked-companies/{company}")
 def unblock_company(company: str):
     db.unblock_company(company)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Scheduled Discoveries
+# ---------------------------------------------------------------------------
+
+class ScheduledDiscoveryCreate(BaseModel):
+    name: str
+    cron_hours: str = "9"         # comma-separated hours, e.g. "9,18"
+    sources: str = "simplify"    # comma-separated: simplify, ats, jsearch, adzuna
+
+class ScheduledDiscoveryUpdate(BaseModel):
+    name: str | None = None
+    cron_hours: str | None = None
+    sources: str | None = None
+    enabled: bool | None = None
+
+@app.get("/api/scheduled-discoveries")
+def list_scheduled_discoveries():
+    return db.get_scheduled_discoveries()
+
+@app.post("/api/scheduled-discoveries")
+def create_scheduled_discovery(body: ScheduledDiscoveryCreate):
+    sd_id = db.create_scheduled_discovery(body.name, body.cron_hours, body.sources)
+    return {"id": sd_id}
+
+@app.patch("/api/scheduled-discoveries/{sd_id}")
+def update_scheduled_discovery(sd_id: int, body: ScheduledDiscoveryUpdate):
+    updates = body.model_dump(exclude_none=True)
+    if "enabled" in updates:
+        updates["enabled"] = 1 if updates["enabled"] else 0
+    db.update_scheduled_discovery(sd_id, **updates)
+    return {"ok": True}
+
+@app.delete("/api/scheduled-discoveries/{sd_id}")
+def delete_scheduled_discovery(sd_id: int):
+    db.delete_scheduled_discovery(sd_id)
     return {"ok": True}
 
 
