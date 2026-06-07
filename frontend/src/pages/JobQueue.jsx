@@ -116,26 +116,69 @@ export default function JobQueue() {
   useEffect(() => {
     const selectId = searchParams.get('select')
     if (selectId && selectId !== selected?.id) {
+      const loadJobAndOutreach = async (job) => {
+        setSelected(job)
+        setMatchResult(null)
+        setSearchParams({}, { replace: true })
+        // Fetch full job data including outreach (same as click handler)
+        try {
+          const full = await api.getJob(job.id || selectId)
+          setSelected(full)
+          if (full.outreach_full && full.outreach_short) {
+            setOutreach({ full: full.outreach_full, short: full.outreach_short, short_hm: full.outreach_short_hm || null })
+            // Auto-generate HM message if missing
+            if (!full.outreach_short_hm && full.description) {
+              api.generateOutreach(full.id || selectId, {}).then(msg => {
+                setOutreach(msg)
+              }).catch(() => {})
+            }
+          } else {
+            setOutreach(null)
+          }
+        } catch (_) {
+          setOutreach(null)
+        }
+      }
       // Try to find in current page
       const found = jobs.find(j => j.id === selectId)
       if (found) {
-        setSelected(found)
-        setMatchResult(null)
-        setOutreach(null)
-        setSearchParams({}, { replace: true })
-      } else {
-        // Job not in current page — fetch it directly
+        loadJobAndOutreach(found)
+      } else if (filter !== '') {
+        // Job not visible under current filter — switch to "All" so it appears in the list
+        setFilter('')
+        setPage(0)
+        // The filter change triggers a reload; the next run of this effect will find the job
         api.getJob(selectId).then(job => {
-          if (job) {
-            setSelected(job)
-            setMatchResult(null)
-            setOutreach(null)
-            setSearchParams({}, { replace: true })
-          }
+          if (job) loadJobAndOutreach(job)
+        }).catch(() => {})
+      } else {
+        // Already on "All" filter — job may be on a different page, just fetch directly
+        api.getJob(selectId).then(job => {
+          if (job) loadJobAndOutreach(job)
         }).catch(() => {})
       }
     }
   }, [jobs, searchParams])
+
+  // Auto-scroll the job list to the selected job (retry after list re-renders)
+  useEffect(() => {
+    if (!selected) return
+    const scrollToJob = () => {
+      if (!listRef.current) return false
+      const el = listRef.current.querySelector(`[data-job-id="${selected.id}"]`)
+      if (el) {
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+        return true
+      }
+      return false
+    }
+    // Try immediately, then retry after list may have re-rendered
+    if (!scrollToJob()) {
+      const t1 = setTimeout(scrollToJob, 300)
+      const t2 = setTimeout(scrollToJob, 800)
+      return () => { clearTimeout(t1); clearTimeout(t2) }
+    }
+  }, [selected?.id, jobs])
 
   const changeFilter = (f) => {
     setFilter(f)
@@ -191,6 +234,7 @@ export default function JobQueue() {
         apply_link: target.apply_link,
         source: target.source || 'jobhunter',
         resume_used: matchResult?.recommended_resume || selected?.recommended_resume || '',
+        email_used: emailUsed,
       })
     }
 
@@ -267,7 +311,7 @@ export default function JobQueue() {
           try {
             const fresh = await api.getJob(job.id)
             if (fresh.outreach_full && fresh.outreach_short) {
-              setOutreach({ full: fresh.outreach_full, short: fresh.outreach_short })
+              setOutreach({ full: fresh.outreach_full, short: fresh.outreach_short, short_hm: fresh.outreach_short_hm || fresh.outreach_short })
             }
           } catch (_) {}
         }
@@ -286,6 +330,13 @@ export default function JobQueue() {
   const [showPasteJd, setShowPasteJd] = useState(false)
   const [pasteJdText, setPasteJdText] = useState('')
   const [contactSaved, setContactSaved] = useState(null)
+  const [emailUsed, setEmailUsed] = useState('thomsonthejus@gmail.com')
+
+  const EMAIL_OPTIONS = [
+    'thomsonthejus@gmail.com',
+    'tjthejus@gmail.com',
+    'thomson.th@northeastern.edu',
+  ]
 
   const openReminderForm = (job) => {
     const now = new Date()
@@ -572,6 +623,7 @@ export default function JobQueue() {
               {jobs.map(job => (
                 <div
                   key={job.id}
+                  data-job-id={job.id}
                   onClick={async () => {
                     setSelected(job)
                     setMatchResult(null)
@@ -583,14 +635,19 @@ export default function JobQueue() {
                       const full = await api.getJob(job.id)
                       setSelected(full)
                       if (full.outreach_full && full.outreach_short) {
-                        setOutreach({ full: full.outreach_full, short: full.outreach_short })
+                        setOutreach({ full: full.outreach_full, short: full.outreach_short, short_hm: full.outreach_short_hm || null })
+                        // Auto-generate HM message if missing
+                        if (!full.outreach_short_hm && full.description) {
+                          api.generateOutreach(job.id, {}).then(msg => {
+                            setOutreach(msg)
+                          }).catch(() => {})
+                        }
                       } else {
                         setOutreach(null)
                       }
                     } catch (_) {
-                      // Fallback to list data
                       if (job.outreach_full && job.outreach_short) {
-                        setOutreach({ full: job.outreach_full, short: job.outreach_short })
+                        setOutreach({ full: job.outreach_full, short: job.outreach_short, short_hm: job.outreach_short_hm || null })
                       } else {
                         setOutreach(null)
                       }
@@ -700,62 +757,89 @@ export default function JobQueue() {
                 </div>
               </div>
 
-              {/* Row 1: Primary actions */}
+              {/* Row 1: Apply + Match + Research */}
               <div className="flex gap-1.5 sm:gap-2 flex-wrap items-center animate-fade-in" style={{ animationDelay: '100ms' }}>
                 {selected.apply_link && (
                   <a href={selected.apply_link} target="_blank" rel="noopener noreferrer"
-                    className="bg-accent hover:bg-accent-hover text-white font-medium text-xs sm:text-sm px-3 sm:px-4 py-1.5 rounded-lg transition-all duration-200 inline-block btn-press animate-pulse-glow">
-                    Apply ↗
+                    className={`font-medium text-xs sm:text-sm px-3 sm:px-4 py-1.5 rounded-lg transition-all duration-200 inline-block btn-press ${
+                      selected.status === 'applied'
+                        ? 'bg-slate-700/60 text-slate-300 border border-slate-500/30 hover:bg-slate-700/80'
+                        : 'bg-accent hover:bg-accent-hover text-white animate-pulse-glow'
+                    }`}>
+                    {selected.status === 'applied' ? 'View Job ↗' : 'Apply ↗'}
                   </a>
                 )}
-                {selected.match_pct == null && (
+                {selected.match_pct == null ? (
                   <button onClick={() => handleMatch(selected)} disabled={matching === selected.id}
                     className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-accent text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 rounded-lg border border-accent/25 transition-all duration-200 btn-press">
                     {matching === selected.id ? 'Matching...' : 'Match %'}
                   </button>
-                )}
-                {selected.match_pct != null && (
+                ) : (
                   <button onClick={() => handleMatch(selected)} disabled={matching === selected.id}
                     className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-tertiary text-xs sm:text-sm px-2 sm:px-2.5 py-1.5 rounded-lg border border-border transition-all duration-200 btn-press" title="Re-run AI matching">
                     {matching === selected.id ? '...' : '↻ Re-match'}
                   </button>
                 )}
+                <span className="w-px h-5 bg-border/50 mx-0.5 hidden sm:block" />
                 <button onClick={() => handleLinkedIn(selected)}
-                  className="bg-surface-overlay hover:bg-border text-text-secondary text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 rounded-lg border border-border transition-all duration-200 btn-press">Recruiters</button>
+                  className="bg-surface-overlay hover:bg-border text-text-secondary text-xs px-2 sm:px-2.5 py-1.5 rounded-lg border border-border transition-all duration-200 btn-press">Recruiters</button>
                 <button onClick={() => handleLinkedInLeaders(selected, 'hiring')}
-                  className="bg-surface-overlay hover:bg-border text-text-secondary text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 rounded-lg border border-border transition-all duration-200 btn-press">Hiring Mgr</button>
+                  className="bg-surface-overlay hover:bg-border text-text-secondary text-xs px-2 sm:px-2.5 py-1.5 rounded-lg border border-border transition-all duration-200 btn-press">Leaders</button>
                 <button onClick={() => handleLinkedInLeaders(selected, 'team')}
-                  className="bg-surface-overlay hover:bg-border text-text-secondary text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 rounded-lg border border-border transition-all duration-200 btn-press">Referral</button>
+                  className="bg-surface-overlay hover:bg-border text-text-secondary text-xs px-2 sm:px-2.5 py-1.5 rounded-lg border border-border transition-all duration-200 btn-press">Referral</button>
+                <button onClick={() => handleLinkedInLeaders(selected, 'posts')}
+                  className="bg-surface-overlay hover:bg-border text-text-secondary text-xs px-2 sm:px-2.5 py-1.5 rounded-lg border border-border transition-all duration-200 btn-press">Posts</button>
                 <button onClick={() => handleFindEmails(selected)} disabled={emailLoading}
-                  className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 rounded-lg border border-border transition-all duration-200 btn-press">
-                  {emailLoading ? 'Finding...' : 'Emails'}
+                  className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-xs px-2 sm:px-2.5 py-1.5 rounded-lg border border-border transition-all duration-200 btn-press">
+                  {emailLoading ? '...' : 'Emails'}
                 </button>
               </div>
 
-              {/* Row 2: Status actions */}
+              {/* Row 2: Mark status */}
               <div className="flex flex-wrap gap-1 sm:gap-1.5 items-center animate-fade-in" style={{ animationDelay: '150ms' }}>
-                <button onClick={() => handleFollowUpConfirm(true, false, selected)}
-                  className="text-[11px] sm:text-xs px-2 sm:px-2.5 py-1 rounded-md bg-emerald-900/20 text-emerald-400 hover:bg-emerald-900/30 transition-all duration-200 btn-press">Applied</button>
-                <button onClick={() => handleFollowUpConfirm(true, true, selected)}
-                  className="text-[11px] sm:text-xs px-2 sm:px-2.5 py-1 rounded-md bg-surface-overlay text-accent hover:bg-border border border-accent/15 transition-all duration-200 btn-press">Applied + Recruiter</button>
+                {selected.status === 'applied' ? (
+                  <span className="text-[11px] sm:text-xs px-2.5 py-1 rounded-md bg-emerald-500/20 text-emerald-300 font-medium border border-emerald-500/30">✓ Applied</span>
+                ) : (
+                  <>
+                    <select
+                      value={emailUsed}
+                      onChange={e => setEmailUsed(e.target.value)}
+                      className="text-[11px] sm:text-xs bg-surface border border-border rounded-md px-1.5 py-1 text-text-secondary outline-none cursor-pointer hover:border-border-hover focus:border-accent/40 transition-all duration-200"
+                    >
+                      {EMAIL_OPTIONS.map(e => (
+                        <option key={e} value={e}>{e.split('@')[0]}</option>
+                      ))}
+                      <option value="other">Other...</option>
+                    </select>
+                    {emailUsed === 'other' && (
+                      <input type="email" placeholder="Email..." onChange={e => setEmailUsed(e.target.value)}
+                        className="text-[11px] bg-surface border border-border rounded-md px-2 py-1 text-text-primary placeholder:text-text-muted w-32 outline-none focus:border-accent/40 transition-all" />
+                    )}
+                    <button onClick={() => handleFollowUpConfirm(true, false, selected)}
+                      className="text-[11px] sm:text-xs px-2 sm:px-2.5 py-1 rounded-md bg-emerald-900/20 text-emerald-400 hover:bg-emerald-900/30 transition-all duration-200 btn-press">Applied</button>
+                    <button onClick={() => handleFollowUpConfirm(true, true, selected)}
+                      className="text-[11px] sm:text-xs px-2 sm:px-2.5 py-1 rounded-md bg-surface-overlay text-accent hover:bg-border border border-accent/15 transition-all duration-200 btn-press">+ Recruiter</button>
+                  </>
+                )}
                 <button onClick={() => handleFollowUpConfirm(false, true, selected)}
                   className="text-[11px] sm:text-xs px-2 sm:px-2.5 py-1 rounded-md bg-surface-overlay text-text-secondary hover:bg-border border border-border transition-all duration-200 btn-press">Contacted</button>
+                <span className="w-px h-4 bg-border/40 mx-0.5" />
                 <button onClick={() => handleSkipJob('Not interested', selected)}
-                  className="text-[11px] sm:text-xs px-2 sm:px-2.5 py-1 rounded-md bg-surface-overlay text-text-muted hover:bg-border border border-border transition-all duration-200 btn-press">Skip</button>
+                  className="text-[11px] px-2 py-1 rounded-md bg-surface-overlay text-text-muted hover:bg-border border border-border transition-all duration-200 btn-press">Skip</button>
                 <button onClick={() => handleSkipJob('No sponsorship', selected)}
-                  className="text-[11px] sm:text-xs px-2 sm:px-2.5 py-1 rounded-md text-danger/60 hover:text-danger bg-red-900/10 transition-all duration-200 btn-press">No Visa</button>
+                  className="text-[11px] px-2 py-1 rounded-md text-danger/60 hover:text-danger bg-red-900/10 transition-all duration-200 btn-press">No Visa</button>
                 <button onClick={() => handleSkipJob('Expired / closed', selected)}
-                  className="text-[11px] sm:text-xs px-2 sm:px-2.5 py-1 rounded-md text-amber-500/60 hover:text-amber-400 bg-amber-900/10 transition-all duration-200 btn-press">Expired</button>
+                  className="text-[11px] px-2 py-1 rounded-md text-amber-500/60 hover:text-amber-400 bg-amber-900/10 transition-all duration-200 btn-press">Expired</button>
                 <button onClick={() => handleSkipJob('Bad / incorrect link', selected)}
-                  className="text-[11px] sm:text-xs px-2 sm:px-2.5 py-1 rounded-md text-amber-500/60 hover:text-amber-400 bg-amber-900/10 transition-all duration-200 btn-press">Bad Link</button>
+                  className="text-[11px] px-2 py-1 rounded-md text-amber-500/60 hover:text-amber-400 bg-amber-900/10 transition-all duration-200 btn-press">Bad Link</button>
                 <button onClick={() => handleSkipJob('Not US location', selected)}
-                  className="text-[11px] sm:text-xs px-2 sm:px-2.5 py-1 rounded-md text-amber-500/60 hover:text-amber-400 bg-amber-900/10 transition-all duration-200 btn-press">Not US</button>
+                  className="text-[11px] px-2 py-1 rounded-md text-amber-500/60 hover:text-amber-400 bg-amber-900/10 transition-all duration-200 btn-press">Not US</button>
                 <button onClick={() => handleBlockCompany('no sponsorship', selected)}
-                  className="text-[11px] sm:text-xs px-2 sm:px-2.5 py-1 rounded-md text-danger/60 hover:text-danger bg-red-900/10 transition-all duration-200 btn-press">Block Co.</button>
+                  className="text-[11px] px-2 py-1 rounded-md text-danger/60 hover:text-danger bg-red-900/10 transition-all duration-200 btn-press">Block Co.</button>
               </div>
 
-              {/* Row 3: Copy buttons */}
-              <div className="flex gap-1.5 sm:gap-2 items-center animate-fade-in" style={{ animationDelay: '200ms' }}>
+              {/* Row 3: Outreach + tools */}
+              <div className="flex gap-1.5 sm:gap-2 flex-wrap items-center animate-fade-in" style={{ animationDelay: '200ms' }}>
                 {selected.description && (
                   <button onClick={() => {
                       const tmp = document.createElement('div')
@@ -764,39 +848,48 @@ export default function JobQueue() {
                       setCopied('jd')
                       setTimeout(() => setCopied(null), 2000)
                     }}
-                    className={`text-[11px] sm:text-xs px-2.5 sm:px-3 py-1.5 rounded-md transition-all duration-300 border btn-press ${
+                    className={`text-[11px] sm:text-xs px-2.5 py-1 rounded-md transition-all duration-300 border btn-press ${
                       copied === 'jd' ? 'bg-emerald-900/20 text-emerald-400 border-emerald-500/20 scale-105' : 'bg-surface-overlay text-text-muted hover:text-text-secondary border-border'
                     }`}>
-                    {copied === 'jd' ? '✓ JD Copied' : 'Copy JD'}
+                    {copied === 'jd' ? '✓ Copied' : 'Copy JD'}
                   </button>
                 )}
                 {outreach?.full && (
                   <button onClick={() => handleCopy(outreach.full, 'full')}
-                    className={`text-[11px] sm:text-xs px-2.5 sm:px-3 py-1.5 rounded-md transition-all duration-300 border btn-press ${
+                    className={`text-[11px] sm:text-xs px-2.5 py-1 rounded-md transition-all duration-300 border btn-press ${
                       copied === 'full' ? 'bg-purple-900/20 text-purple-400 border-purple-500/20 scale-105' : 'bg-purple-900/10 text-purple-400/70 hover:text-purple-400 border-purple-500/15'
                     }`}>
-                    {copied === 'full' ? '✓ Full Copied' : 'Copy Full Outreach'}
+                    {copied === 'full' ? '✓ Copied' : 'Full Outreach'}
                   </button>
                 )}
                 {outreach?.short && (
                   <button onClick={() => handleCopy(outreach.short, 'short')}
-                    className={`text-[11px] sm:text-xs px-2.5 sm:px-3 py-1.5 rounded-md transition-all duration-300 border btn-press ${
+                    className={`text-[11px] sm:text-xs px-2.5 py-1 rounded-md transition-all duration-300 border btn-press ${
                       copied === 'short' ? 'bg-purple-900/20 text-purple-400 border-purple-500/20 scale-105' : 'bg-purple-900/10 text-purple-400/70 hover:text-purple-400 border-purple-500/15'
                     }`}>
-                    {copied === 'short' ? '✓ Short Copied' : 'Copy Short Outreach'}
+                    {copied === 'short' ? '✓ Copied' : 'Recruiter Msg'}
                   </button>
                 )}
+                {outreach?.short && (
+                  <button onClick={() => handleCopy(outreach.short_hm || outreach.short, 'short_hm')}
+                    className={`text-[11px] sm:text-xs px-2.5 py-1 rounded-md transition-all duration-300 border btn-press ${
+                      copied === 'short_hm' ? 'bg-blue-900/20 text-blue-400 border-blue-500/20 scale-105' : 'bg-blue-900/10 text-blue-400/70 hover:text-blue-400 border-blue-500/15'
+                    }`}>
+                    {copied === 'short_hm' ? '✓ Copied' : 'HM Msg'}
+                  </button>
+                )}
+                <span className="w-px h-4 bg-border/40 mx-0.5" />
                 <button onClick={() => showReminderForm ? setShowReminderForm(false) : openReminderForm(selected)}
-                  className={`text-[11px] sm:text-xs px-2.5 sm:px-3 py-1.5 rounded-md transition-all duration-300 border btn-press ${
+                  className={`text-[11px] sm:text-xs px-2.5 py-1 rounded-md transition-all duration-300 border btn-press ${
                     reminderSet === selected.id ? 'bg-amber-900/20 text-amber-400 border-amber-500/20 scale-105'
                     : showReminderForm ? 'bg-amber-900/20 text-amber-400 border-amber-500/30'
                     : 'bg-amber-900/10 text-amber-400/70 hover:text-amber-400 border-amber-500/15'
                   }`}>
-                  {reminderSet === selected.id ? '✓ Reminder Set' : showReminderForm ? 'Cancel' : 'Set Reminder'}
+                  {reminderSet === selected.id ? '✓ Set' : showReminderForm ? 'Cancel' : 'Reminder'}
                 </button>
                 {!selected.description && (
                   <button onClick={() => { setShowPasteJd(!showPasteJd); setPasteJdText('') }}
-                    className={`text-[11px] sm:text-xs px-2.5 sm:px-3 py-1.5 rounded-md transition-all duration-300 border btn-press ${
+                    className={`text-[11px] sm:text-xs px-2.5 py-1 rounded-md transition-all duration-300 border btn-press ${
                       showPasteJd ? 'bg-blue-900/20 text-blue-400 border-blue-500/30' : 'bg-blue-900/10 text-blue-400/70 hover:text-blue-400 border-blue-500/15'
                     }`}>
                     {showPasteJd ? 'Cancel' : 'Paste JD'}
@@ -947,7 +1040,7 @@ export default function JobQueue() {
                     No Visa Sponsorship
                   </div>
                 )}
-                {(selected.min_years_required || matchResult?.min_years_required) && (
+                {(selected.min_years_required > 0 || matchResult?.min_years_required > 0) && (
                   <div className={`text-xs px-3 py-1.5 rounded-md mb-2 font-medium animate-fade-in ${
                     (selected.min_years_required || matchResult?.min_years_required) >= 5
                       ? 'bg-red-900/20 text-red-400'
@@ -1067,7 +1160,7 @@ export default function JobQueue() {
 
                 <div className="mb-3">
                   <div className="flex justify-between items-center mb-1.5">
-                    <span className="text-xs text-text-tertiary font-medium">Short Version <span className="text-text-muted">({outreach.short.length} chars)</span></span>
+                    <span className="text-xs text-purple-400/80 font-medium">Short — Recruiter <span className="text-text-muted">({outreach.short.length} chars)</span></span>
                     <button
                       onClick={() => handleCopy(outreach.short, 'short')}
                       className="text-xs px-2 py-0.5 rounded bg-purple-900/30 text-purple-400 hover:bg-purple-900/50 transition-all btn-press"
@@ -1077,6 +1170,21 @@ export default function JobQueue() {
                   </div>
                   <p className="text-xs text-text-secondary leading-relaxed bg-surface rounded-md p-3 border border-border whitespace-pre-wrap">{outreach.short}</p>
                 </div>
+
+                {outreach.short_hm && (
+                <div className="mb-3">
+                  <div className="flex justify-between items-center mb-1.5">
+                    <span className="text-xs text-blue-400/80 font-medium">Short — Leader/Engineer <span className="text-text-muted">({outreach.short_hm.length} chars)</span></span>
+                    <button
+                      onClick={() => handleCopy(outreach.short_hm, 'short_hm')}
+                      className="text-xs px-2 py-0.5 rounded bg-blue-900/30 text-blue-400 hover:bg-blue-900/50 transition-all btn-press"
+                    >
+                      {copied === 'short_hm' ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                  <p className="text-xs text-text-secondary leading-relaxed bg-surface rounded-md p-3 border border-blue-900/30 whitespace-pre-wrap">{outreach.short_hm}</p>
+                </div>
+                )}
 
                 <details className="text-xs">
                   <summary className="text-text-muted cursor-pointer hover:text-text-tertiary transition-colors">Regenerate with context</summary>
