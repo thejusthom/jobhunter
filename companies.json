@@ -274,7 +274,8 @@
   {
     "name": "Affirm",
     "ats": "greenhouse",
-    "slug": "affirm"
+    "slug": "affirm",
+    "linkedin_id": "2963249"
   },
   {
     "name": "Vercel",
@@ -1127,7 +1128,7 @@
     "name": "Snap",
     "ats": "workday",
     "slug": "snapchat",
-    "linkedin_id": "2961446",
+    "linkedin_id": "15191764",
     "wd_num": 1,
     "site": "snap"
   },
@@ -1574,7 +1575,7 @@
     "name": "GoodRx",
     "ats": "workday",
     "slug": "goodrx",
-    "linkedin_id": "3007569",
+    "linkedin_id": "2466850",
     "wd_num": 1,
     "site": "careers"
   },
@@ -1636,7 +1637,7 @@
     "name": "Tempus",
     "ats": "workday",
     "slug": "tempus",
-    "linkedin_id": "10314712",
+    "linkedin_id": "10262473",
     "wd_num": 5,
     "site": "tempus_Careers"
   },
