@@ -1911,7 +1911,8 @@ def linkedin_recruiter_search(company: str):
     if linkedin_id:
         query = 'recruiter OR "talent acquisition" OR sourcer'
     else:
-        query = f"{clean} recruiter"
+        # No company ID known — quote the name so keyword match stays tight
+        query = f'"{clean}" recruiter'
 
     url = "https://www.linkedin.com/search/results/people/?"
     url += f"keywords={urllib.parse.quote(query)}"
