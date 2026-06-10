@@ -201,6 +201,15 @@ def init_db():
         db.execute("CREATE INDEX IF NOT EXISTS idx_sponsors_norm ON h1b_sponsors(name_norm)")
         db.execute("CREATE INDEX IF NOT EXISTS idx_sponsors_h1b ON h1b_sponsors(has_h1b, total_approvals DESC)")
 
+        # Resolved ATS board cache for sponsors (used by discovery)
+        sponsor_cols = {r[1] for r in db.execute("PRAGMA table_info(h1b_sponsors)").fetchall()}
+        if "ats_type" not in sponsor_cols:
+            db.execute("ALTER TABLE h1b_sponsors ADD COLUMN ats_type TEXT DEFAULT NULL")
+        if "ats_slug" not in sponsor_cols:
+            db.execute("ALTER TABLE h1b_sponsors ADD COLUMN ats_slug TEXT DEFAULT NULL")
+        if "ats_checked" not in sponsor_cols:
+            db.execute("ALTER TABLE h1b_sponsors ADD COLUMN ats_checked TEXT DEFAULT NULL")
+
 
 def migrate_json_to_db():
     """One-time migration from queue.json and application_log.json to SQLite."""
@@ -820,6 +829,13 @@ def import_sponsors(rows: list[dict]) -> int:
         return json.dumps([v])
 
     with get_db() as db:
+        # Preserve resolved ATS boards across re-imports
+        ats_cache = {
+            r["name_norm"]: (r["ats_type"], r["ats_slug"], r["ats_checked"])
+            for r in db.execute(
+                "SELECT name_norm, ats_type, ats_slug, ats_checked FROM h1b_sponsors WHERE ats_checked IS NOT NULL"
+            ).fetchall()
+        }
         db.execute("DELETE FROM h1b_sponsors")
         count = 0
         for r in rows:
@@ -844,6 +860,11 @@ def import_sponsors(rows: list[dict]) -> int:
                 1 if approvals is not None else 0,
             ))
             count += 1
+        for norm, (ats_type, ats_slug, ats_checked) in ats_cache.items():
+            db.execute(
+                "UPDATE h1b_sponsors SET ats_type = ?, ats_slug = ?, ats_checked = ? WHERE name_norm = ?",
+                (ats_type, ats_slug, ats_checked, norm),
+            )
         return count
 
 
@@ -915,7 +936,45 @@ def sponsor_counts() -> dict:
     with get_db() as db:
         total = db.execute("SELECT COUNT(*) FROM h1b_sponsors").fetchone()[0]
         h1b = db.execute("SELECT COUNT(*) FROM h1b_sponsors WHERE has_h1b = 1").fetchone()[0]
-        return {"total": total, "with_h1b": h1b}
+        checked = db.execute("SELECT COUNT(*) FROM h1b_sponsors WHERE ats_checked IS NOT NULL").fetchone()[0]
+        with_board = db.execute(
+            "SELECT COUNT(*) FROM h1b_sponsors WHERE ats_type IS NOT NULL AND ats_type != 'none'"
+        ).fetchone()[0]
+        return {"total": total, "with_h1b": h1b, "ats_checked": checked, "ats_resolved": with_board}
+
+
+def set_sponsor_ats(sponsor_id: int, ats_type: str, ats_slug: str):
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as db:
+        db.execute(
+            "UPDATE h1b_sponsors SET ats_type = ?, ats_slug = ?, ats_checked = ? WHERE id = ?",
+            (ats_type, ats_slug, now, sponsor_id),
+        )
+
+
+def get_unresolved_sponsors(eng_only: bool = True, limit: int = 5000):
+    """Sponsors with H-1B history whose ATS board hasn't been probed yet."""
+    eng_clause = """AND (UPPER(top_titles) LIKE '%SOFTWARE%' OR UPPER(top_titles) LIKE '%ENGINEER%'
+        OR UPPER(top_titles) LIKE '%DEVELOPER%' OR UPPER(top_titles) LIKE '%DATA%')""" if eng_only else ""
+    with get_db() as db:
+        rows = db.execute(
+            f"""SELECT id, name, website FROM h1b_sponsors
+                WHERE has_h1b = 1 AND ats_checked IS NULL {eng_clause}
+                ORDER BY total_approvals DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_resolved_sponsors():
+    """Sponsors with a known ATS board, for discovery runs."""
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT id, name, website, ats_type, ats_slug FROM h1b_sponsors
+               WHERE ats_type IS NOT NULL AND ats_type != 'none'
+               ORDER BY total_approvals DESC"""
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 if __name__ == "__main__":

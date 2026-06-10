@@ -20,7 +20,36 @@ export default function Sponsors() {
   const [expanded, setExpanded] = useState(null)
   const [scanning, setScanning] = useState(null)
   const [scanResults, setScanResults] = useState({})
+  const [resolveStatus, setResolveStatus] = useState(null)
   const navigate = useNavigate()
+
+  // Poll bulk ATS resolution status (fast poll while running)
+  useEffect(() => {
+    let timer
+    const poll = async () => {
+      try {
+        const st = await api.getSponsorResolveStatus()
+        setResolveStatus(st)
+        if (st.running) timer = setTimeout(poll, 3000)
+      } catch (_) {}
+    }
+    poll()
+    return () => clearTimeout(timer)
+  }, [])
+
+  const handleResolveAll = async () => {
+    try {
+      await api.resolveSponsorAts()
+      const st = await api.getSponsorResolveStatus()
+      setResolveStatus({ ...st, running: true })
+      const poll = async () => {
+        const s = await api.getSponsorResolveStatus()
+        setResolveStatus(s)
+        if (s.running) setTimeout(poll, 3000)
+      }
+      setTimeout(poll, 3000)
+    } catch (_) {}
+  }
 
   useEffect(() => {
     const t = setTimeout(() => { setSearchDebounced(search); setPage(0) }, 300)
@@ -69,7 +98,25 @@ export default function Sponsors() {
           <h1 className="text-xl font-semibold text-text-primary">H-1B Sponsors</h1>
           <p className="text-text-tertiary text-xs mt-0.5">Companies with proven H-1B sponsorship history (80-Days-to-Stay dataset) — target these for outreach</p>
         </div>
-        <span className="text-xs text-text-muted">{data.total} sponsors</span>
+        <div className="flex items-center gap-3">
+          {resolveStatus && (
+            <span className="text-xs text-text-muted">
+              {resolveStatus.running
+                ? `Probing ATS boards... ${resolveStatus.checked}/${resolveStatus.total} (${resolveStatus.resolved} found)`
+                : resolveStatus.ats_resolved > 0
+                  ? `${resolveStatus.ats_resolved} ATS boards resolved — included in discovery`
+                  : null}
+            </span>
+          )}
+          {resolveStatus && !resolveStatus.running && resolveStatus.ats_checked < resolveStatus.with_h1b && (
+            <button onClick={handleResolveAll}
+              className="text-xs px-2.5 py-1.5 rounded-lg bg-accent/15 text-accent border border-accent/30 hover:bg-accent/25 transition-all btn-press"
+              title="Probe Greenhouse/Lever/Ashby for all sponsors so their boards are scanned automatically during discovery">
+              Resolve ATS Boards
+            </button>
+          )}
+          <span className="text-xs text-text-muted">{data.total} sponsors</span>
+        </div>
       </div>
 
       {/* Filters */}

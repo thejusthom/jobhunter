@@ -70,6 +70,7 @@ def _scheduler_loop():
                         skip_ats="ats" not in sources,
                         skip_adzuna="adzuna" not in sources,
                         skip_simplify="simplify" not in sources,
+                        skip_sponsors="sponsors" not in sources,
                         freshness_hours=24,
                     )
                     db.update_scheduled_discovery(sched["id"], last_run=now.isoformat())
@@ -158,6 +159,7 @@ class DiscoverRequest(BaseModel):
     skip_ats: bool = False
     skip_adzuna: bool = False
     skip_simplify: bool = False
+    skip_sponsors: bool = False
     freshness_hours: int = 24
 
 
@@ -1046,7 +1048,7 @@ def _fetch_adzuna(query: str, location: str = "us", pages: int = 3, max_days_old
     return jobs
 
 
-def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_ats: bool, freshness_hours: int = 24, skip_adzuna: bool = False, skip_simplify: bool = False):
+def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_ats: bool, freshness_hours: int = 24, skip_adzuna: bool = False, skip_simplify: bool = False, skip_sponsors: bool = False):
     discovery_status["running"] = True
     discovery_status["phase"] = "Starting..."
     total_new = 0
@@ -1285,6 +1287,37 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
                         }
                         total_new += db.upsert_jobs([entry])
 
+        # --- H-1B sponsor boards (resolved via Sponsors page / bulk resolve) ---
+        if not skip_sponsors:
+            sponsors = db.get_resolved_sponsors()
+            if sponsors:
+                discovery_status["phase"] = f"Fetching {len(sponsors)} sponsor boards..."
+                import ats_discovery
+                from ats_discovery import fetch_greenhouse, fetch_lever, fetch_ashby
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                ats_discovery.FRESHNESS_DAYS = max(1, freshness_hours / 24)
+                sponsor_fetchers = {"greenhouse": fetch_greenhouse, "lever": fetch_lever, "ashby": fetch_ashby}
+
+                def _fetch_sponsor_board(s):
+                    display = db.normalize_sponsor_name(s["name"]).title()
+                    if db.is_company_blocked(display) or s["ats_type"] not in sponsor_fetchers:
+                        return s, []
+                    try:
+                        return s, sponsor_fetchers[s["ats_type"]](s["ats_slug"], display)
+                    except Exception:
+                        return s, []
+
+                sponsor_new = 0
+                with ThreadPoolExecutor(max_workers=12) as executor:
+                    futures = [executor.submit(_fetch_sponsor_board, s) for s in sponsors]
+                    for future in as_completed(futures):
+                        s, raw_jobs = future.result()
+                        if raw_jobs:
+                            entries = _sponsor_jobs_to_entries(s["name"], s["ats_type"], raw_jobs, source="sponsor")
+                            sponsor_new += db.upsert_jobs(entries)
+                total_new += sponsor_new
+                _log(f"[discovery] Sponsor boards: {sponsor_new} new jobs from {len(sponsors)} boards")
+
         # --- SimplifyJobs GitHub (New-Grad-Positions) ---
         if not skip_simplify:
             discovery_status["phase"] = "Fetching Simplify GitHub..."
@@ -1362,7 +1395,7 @@ def trigger_discovery(body: DiscoverRequest, background_tasks: BackgroundTasks):
     if discovery_status["running"]:
         raise HTTPException(409, "Discovery already running")
     background_tasks.add_task(
-        _run_discovery, body.queries, body.location, body.skip_jsearch, body.skip_ats, body.freshness_hours, body.skip_adzuna, body.skip_simplify,
+        _run_discovery, body.queries, body.location, body.skip_jsearch, body.skip_ats, body.freshness_hours, body.skip_adzuna, body.skip_simplify, body.skip_sponsors,
     )
     return {"status": "started"}
 
@@ -2278,58 +2311,41 @@ def _sponsor_slug_candidates(name: str, website: str) -> list[str]:
     return out
 
 
-@app.post("/api/sponsors/{sponsor_id}/scan-jobs")
-def sponsor_scan_jobs(sponsor_id: int):
-    """Probe the sponsor's ATS (Greenhouse/Lever/Ashby) via slug guesses and add open US roles to the queue."""
+ENG_TITLE_KEYWORDS = (
+    "engineer", "developer", "software", "swe", "sde", "data scientist",
+    "machine learning", "devops", "sre", "full stack", "fullstack",
+    "backend", "back end", "frontend", "front end", "infrastructure", "platform",
+)
+
+
+def _probe_sponsor_ats(name: str, website: str) -> tuple[str | None, str | None, list]:
+    """Try Greenhouse/Lever/Ashby with slug guesses. Returns (ats_type, slug, raw_jobs).
+    Freshness is controlled by the caller via ats_discovery.FRESHNESS_DAYS (not thread-safe to set here)."""
     import ats_discovery as ats
 
-    with db.get_db() as conn:
-        row = conn.execute("SELECT * FROM h1b_sponsors WHERE id = ?", (sponsor_id,)).fetchone()
-    if not row:
-        raise HTTPException(404, "Sponsor not found")
-    sponsor = dict(row)
+    display_name = db.normalize_sponsor_name(name).title()
+    candidates = _sponsor_slug_candidates(name, website or "")
+    for slug in candidates:
+        for fetcher, label in [
+            (ats.fetch_greenhouse, "greenhouse"),
+            (ats.fetch_lever, "lever"),
+            (ats.fetch_ashby, "ashby"),
+        ]:
+            try:
+                jobs = fetcher(slug, display_name)
+            except Exception:
+                jobs = []
+            if jobs:
+                return label, slug, jobs
+    return None, None, []
 
-    display_name = db.normalize_sponsor_name(sponsor["name"]).title()
-    if db.is_company_blocked(display_name):
-        return {"found": 0, "added": 0, "ats": None, "error": "Company is blocked"}
 
-    candidates = _sponsor_slug_candidates(sponsor["name"], sponsor.get("website", ""))
-
-    found, ats_name, slug_used = [], None, None
-    # Sponsor scans want the whole board, not just the last day —
-    # _is_fresh binds FRESHNESS_DAYS as a default arg, so swap the function itself
-    _orig_is_fresh = ats._is_fresh
-    ats._is_fresh = lambda dt, days=30, hours=None: _orig_is_fresh(dt, days=30)
-    try:
-        for slug in candidates:
-            for fetcher, label in [
-                (ats.fetch_greenhouse, "greenhouse"),
-                (ats.fetch_lever, "lever"),
-                (ats.fetch_ashby, "ashby"),
-            ]:
-                try:
-                    jobs = fetcher(slug, display_name)
-                except Exception:
-                    jobs = []
-                if jobs:
-                    found, ats_name, slug_used = jobs, label, slug
-                    break
-            if found:
-                break
-    finally:
-        ats._is_fresh = _orig_is_fresh
-
-    if not found:
-        return {"found": 0, "added": 0, "ats": None, "tried_slugs": candidates}
-
-    ENG_TITLE_KEYWORDS = (
-        "engineer", "developer", "software", "swe", "sde", "data scientist",
-        "machine learning", "devops", "sre", "full stack", "fullstack",
-        "backend", "back end", "frontend", "front end", "infrastructure", "platform",
-    )
+def _sponsor_jobs_to_entries(sponsor_name: str, ats_name: str, raw_jobs: list, source: str = "sponsor_scan") -> list:
+    """Filter raw ATS jobs to engineering roles and convert to queue entries."""
+    display_name = db.normalize_sponsor_name(sponsor_name).title()
     now = datetime.now(timezone.utc).isoformat()
     entries = []
-    for j in found:
+    for j in raw_jobs:
         title = j.get("job_title", "")
         tl = title.lower()
         if any(kw in tl for kw in SKIP_TITLE_KEYWORDS):
@@ -2347,12 +2363,93 @@ def sponsor_scan_jobs(sponsor_id: int):
             "description": j.get("job_description", ""),
             "posted_at": j.get("job_posted_at_datetime_utc", "") or "",
             "discovered_at": now,
-            "source": "sponsor_scan",
-            "query": f"sponsor:{sponsor['name']}",
+            "source": source,
+            "query": f"sponsor:{sponsor_name}",
         })
+    return entries
+
+
+@app.post("/api/sponsors/{sponsor_id}/scan-jobs")
+def sponsor_scan_jobs(sponsor_id: int):
+    """Probe the sponsor's ATS (Greenhouse/Lever/Ashby) via slug guesses and add open US roles to the queue."""
+    with db.get_db() as conn:
+        row = conn.execute("SELECT * FROM h1b_sponsors WHERE id = ?", (sponsor_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Sponsor not found")
+    sponsor = dict(row)
+
+    display_name = db.normalize_sponsor_name(sponsor["name"]).title()
+    if db.is_company_blocked(display_name):
+        return {"found": 0, "added": 0, "ats": None, "error": "Company is blocked"}
+
+    import ats_discovery as _ats
+    old_freshness = _ats.FRESHNESS_DAYS
+    _ats.FRESHNESS_DAYS = 30  # manual scan wants the whole recent board, not just today
+    try:
+        ats_name, slug_used, found = _probe_sponsor_ats(sponsor["name"], sponsor.get("website", ""))
+    finally:
+        _ats.FRESHNESS_DAYS = old_freshness
+    # Cache the resolution either way so discovery knows about this board
+    db.set_sponsor_ats(sponsor_id, ats_name or "none", slug_used or "")
+
+    if not found:
+        return {"found": 0, "added": 0, "ats": None}
+
+    entries = _sponsor_jobs_to_entries(sponsor["name"], ats_name, found)
     added = db.upsert_jobs(entries)
     _log(f"[sponsor-scan] {display_name}: {ats_name}/{slug_used} -> {len(found)} jobs, {added} new")
     return {"found": len(entries), "added": added, "ats": ats_name, "slug": slug_used}
+
+
+# --- Bulk ATS resolution (one-time probe, cached in h1b_sponsors) ---
+
+sponsor_resolve_status = {"running": False, "checked": 0, "total": 0, "resolved": 0}
+
+
+def _run_sponsor_resolve():
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import ats_discovery as _ats
+
+    sponsors = db.get_unresolved_sponsors(eng_only=True)
+    sponsor_resolve_status.update({"running": True, "checked": 0, "total": len(sponsors), "resolved": 0})
+    _log(f"[sponsor-resolve] Probing ATS boards for {len(sponsors)} sponsors...")
+
+    def _probe(s):
+        ats_name, slug, jobs = _probe_sponsor_ats(s["name"], s.get("website", ""))
+        return s["id"], s["name"], ats_name, slug
+
+    # Resolution checks board EXISTENCE — a board with only old postings still counts
+    old_freshness = _ats.FRESHNESS_DAYS
+    _ats.FRESHNESS_DAYS = 365
+    try:
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(_probe, s) for s in sponsors]
+            for f in as_completed(futures):
+                sid, name, ats_name, slug = f.result()
+                db.set_sponsor_ats(sid, ats_name or "none", slug or "")
+                sponsor_resolve_status["checked"] += 1
+                if ats_name:
+                    sponsor_resolve_status["resolved"] += 1
+                    _log(f"[sponsor-resolve] {name} -> {ats_name}/{slug}")
+    finally:
+        _ats.FRESHNESS_DAYS = old_freshness
+        sponsor_resolve_status["running"] = False
+        _log(f"[sponsor-resolve] Done: {sponsor_resolve_status['resolved']}/{sponsor_resolve_status['checked']} boards found")
+
+
+@app.post("/api/sponsors/resolve-ats")
+def sponsor_resolve_ats(background_tasks: BackgroundTasks):
+    """Probe all unchecked eng sponsors for public ATS boards (background, one-time)."""
+    if sponsor_resolve_status["running"]:
+        return {"started": False, "status": sponsor_resolve_status}
+    background_tasks.add_task(_run_sponsor_resolve)
+    return {"started": True}
+
+
+@app.get("/api/sponsors/resolve-status")
+def sponsor_resolve_get_status():
+    # Status keys win — sponsor_counts' "total" means dataset size, not probe progress
+    return {**db.sponsor_counts(), **sponsor_resolve_status}
 
 
 @app.post("/api/jobs/fix-workday-urls")

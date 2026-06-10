@@ -69,7 +69,10 @@ def _strip_html(text: str) -> str:
     return cleaned.strip()
 
 
-def _is_fresh(dt: datetime, days: int = FRESHNESS_DAYS, hours: int | None = None) -> bool:
+def _is_fresh(dt: datetime, days: int | None = None, hours: int | None = None) -> bool:
+    # Read FRESHNESS_DAYS at call time (not def time) so runtime overrides take effect
+    if days is None:
+        days = FRESHNESS_DAYS
     if hours is not None:
         return (datetime.now(timezone.utc) - dt) <= timedelta(hours=hours)
     return (datetime.now(timezone.utc) - dt) <= timedelta(days=days)

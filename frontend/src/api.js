@@ -81,6 +81,8 @@ export const api = {
   getSponsorExecutives: (company) => request(`/sponsors/executives?company=${encodeURIComponent(company)}`),
   linkedinRecruiterSearch: (company) => request(`/linkedin-recruiter-search?company=${encodeURIComponent(company)}`),
   scanSponsorJobs: (id) => request(`/sponsors/${id}/scan-jobs`, { method: 'POST' }),
+  resolveSponsorAts: () => request('/sponsors/resolve-ats', { method: 'POST' }),
+  getSponsorResolveStatus: () => request('/sponsors/resolve-status'),
 
   // Auto-Apply Engine
   autoApplyStart: (data = {}) => request('/auto-apply/start', { method: 'POST', body: JSON.stringify(data) }),

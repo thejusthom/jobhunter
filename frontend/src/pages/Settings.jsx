@@ -6,6 +6,7 @@ const SOURCE_OPTIONS = [
   { value: 'ats', label: 'ATS (Greenhouse, Lever, etc.)' },
   { value: 'jsearch', label: 'JSearch' },
   { value: 'adzuna', label: 'Adzuna' },
+  { value: 'sponsors', label: 'H-1B Sponsors' },
 ]
 
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, i) => ({
