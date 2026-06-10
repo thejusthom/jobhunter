@@ -72,6 +72,14 @@ export const api = {
   updateScheduledDiscovery: (id, data) => request(`/scheduled-discoveries/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteScheduledDiscovery: (id) => request(`/scheduled-discoveries/${id}`, { method: 'DELETE' }),
 
+  // H-1B Sponsors
+  getSponsors: (params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    return request(`/sponsors${q ? '?' + q : ''}`);
+  },
+  getSponsorStats: () => request('/sponsors/stats'),
+  getSponsorExecutives: (company) => request(`/sponsors/executives?company=${encodeURIComponent(company)}`),
+
   // Auto-Apply Engine
   autoApplyStart: (data = {}) => request('/auto-apply/start', { method: 'POST', body: JSON.stringify(data) }),
   autoApplyStatus: () => request('/auto-apply/status'),

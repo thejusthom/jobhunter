@@ -700,6 +700,13 @@ export default function JobQueue() {
                         })()}
                       </span>
                     )}
+                    {job.h1b_sponsor && (
+                      <span
+                        className="px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide"
+                        style={{ backgroundColor: '#05966922', color: '#34d399', borderColor: '#05966944', borderWidth: '1px' }}
+                        title={`Sponsored ${Math.round(job.h1b_sponsor.total_approvals)} H-1Bs · ${Math.round(job.h1b_sponsor.approval_rate)}% approval`}
+                      >H1B ✓</span>
+                    )}
                     {job.posted_at && <span className="ml-1">Posted {timeAgo(job.posted_at)}</span>}
                   </div>
                 </div>
@@ -754,6 +761,18 @@ export default function JobQueue() {
                     <p className="text-text-tertiary text-sm">{selected.company} · {selected.location}</p>
                     <LinkedInIdEditor company={selected.company} compact />
                   </div>
+                  {selected.h1b_sponsor && (
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap text-xs">
+                      <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-medium"
+                        title={selected.h1b_sponsor.top_titles?.length ? `Sponsored roles: ${selected.h1b_sponsor.top_titles.join(', ')}` : ''}>
+                        ✓ H-1B Sponsor
+                      </span>
+                      <span className="text-text-tertiary">
+                        {Math.round(selected.h1b_sponsor.total_approvals)} approvals · {Math.round(selected.h1b_sponsor.approval_rate)}% rate
+                        {selected.h1b_sponsor.median_salary > 0 && ` · $${Math.round(selected.h1b_sponsor.median_salary / 1000)}K median`}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 

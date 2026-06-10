@@ -3,6 +3,7 @@
 import os
 import sys
 import re
+import functools
 import json
 import html
 import urllib.parse
@@ -175,6 +176,35 @@ def _parse_json_fields(job: dict) -> dict:
                 job[field] = None
     return job
 
+
+@functools.lru_cache(maxsize=2048)
+def _sponsor_for_company(company: str) -> tuple | None:
+    """Cached H-1B sponsor lookup. Returns compact tuple (sponsor data is static per import)."""
+    s = db.lookup_sponsor(company)
+    if not s:
+        return None
+    try:
+        titles = json.loads(s.get("top_titles") or "[]")
+    except (json.JSONDecodeError, TypeError):
+        titles = []
+    return (
+        s["name"], s.get("total_approvals"), s.get("total_denials"),
+        s.get("approval_rate"), s.get("median_salary"), json.dumps(titles[:6]),
+    )
+
+
+def _attach_sponsor(job: dict) -> dict:
+    info = _sponsor_for_company(job.get("company") or "")
+    if info:
+        job["h1b_sponsor"] = {
+            "name": info[0], "total_approvals": info[1], "total_denials": info[2],
+            "approval_rate": info[3], "median_salary": info[4],
+            "top_titles": json.loads(info[5]),
+        }
+    else:
+        job["h1b_sponsor"] = None
+    return job
+
 @app.get("/api/jobs")
 def list_jobs(
     status: str | None = None,
@@ -185,7 +215,7 @@ def list_jobs(
     sort: str | None = None,
 ):
     jobs = db.get_jobs(status=status, min_score=min_score, limit=limit, offset=offset, search=search, sort=sort)
-    jobs = [_parse_json_fields(j) for j in jobs]
+    jobs = [_attach_sponsor(_parse_json_fields(j)) for j in jobs]
     total = db.count_jobs(status=status, min_score=min_score, search=search)
     return {"jobs": jobs, "total": total, "limit": limit, "offset": offset}
 
@@ -213,7 +243,7 @@ def get_job(job_id: str):
                 _log(f"[auto-jd] Fetched JD for {job_id[:8]} on view ({len(desc)} chars)")
         except Exception as e:
             _log(f"[auto-jd] Failed for {job_id[:8]}: {e}")
-    return _parse_json_fields(job)
+    return _attach_sponsor(_parse_json_fields(job))
 
 @app.patch("/api/jobs/{job_id}")
 def update_job(job_id: str, body: JobUpdate):
@@ -2154,6 +2184,45 @@ def delete_scheduled_discovery(sd_id: int):
 @app.get("/api/analytics")
 def get_analytics():
     return db.get_analytics()
+
+
+# --- H-1B sponsors ---
+
+@app.get("/api/sponsors")
+def list_sponsors(
+    search: str | None = None,
+    min_approvals: float | None = None,
+    min_rate: float | None = None,
+    state: str | None = None,
+    eng_only: bool = False,
+    sort: str = "approvals",
+    limit: int = 50,
+    offset: int = 0,
+):
+    result = db.get_sponsors(
+        search=search, min_approvals=min_approvals, min_rate=min_rate,
+        state=state, eng_only=eng_only, sort=sort, limit=limit, offset=offset,
+    )
+    for s in result["sponsors"]:
+        try:
+            s["top_titles"] = json.loads(s.get("top_titles") or "[]")
+        except (json.JSONDecodeError, TypeError):
+            s["top_titles"] = []
+    return result
+
+
+@app.get("/api/sponsors/stats")
+def sponsor_stats():
+    return db.sponsor_counts()
+
+
+@app.get("/api/sponsors/executives")
+def sponsor_executives(company: str):
+    """Executive officers from the dataset (incl. funding-only startups) for outreach targeting."""
+    info = db.lookup_sponsor_executives(company)
+    if not info:
+        return {"found": False}
+    return {"found": True, **info}
 
 
 @app.post("/api/jobs/fix-workday-urls")

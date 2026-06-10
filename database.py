@@ -176,6 +176,31 @@ def init_db():
             )
         """)
 
+        # H-1B sponsor companies (imported from 80-Days-to-Stay dataset)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS h1b_sponsors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                name_norm TEXT NOT NULL,
+                industry TEXT DEFAULT '',
+                website TEXT DEFAULT '',
+                city TEXT DEFAULT '',
+                state TEXT DEFAULT '',
+                executives TEXT DEFAULT '',
+                total_funding REAL DEFAULT NULL,
+                latest_funding_stage TEXT DEFAULT '',
+                latest_funding_date TEXT DEFAULT '',
+                total_approvals REAL DEFAULT NULL,
+                total_denials REAL DEFAULT NULL,
+                approval_rate REAL DEFAULT NULL,
+                median_salary REAL DEFAULT NULL,
+                top_titles TEXT DEFAULT '',
+                has_h1b INTEGER DEFAULT 0
+            )
+        """)
+        db.execute("CREATE INDEX IF NOT EXISTS idx_sponsors_norm ON h1b_sponsors(name_norm)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_sponsors_h1b ON h1b_sponsors(has_h1b, total_approvals DESC)")
+
 
 def migrate_json_to_db():
     """One-time migration from queue.json and application_log.json to SQLite."""
@@ -749,6 +774,148 @@ def get_collected_emails(company: str = None, limit: int = 200, offset: int = 0)
             params[:-2] if clauses else []
         ).fetchone()["count"]
         return {"emails": [dict(r) for r in rows], "total": total}
+
+
+# --- H-1B sponsors ---
+
+import re as _re
+
+_CORP_SUFFIXES = _re.compile(
+    r"\b(INCORPORATED|CORPORATION|COMPANY|HOLDINGS?|GROUP|INC|CORP|LLC|LLP|LTD|PLC|CO|LP|USA|US)\b\.?",
+)
+
+
+def normalize_sponsor_name(name: str) -> str:
+    """Normalize a company name for fuzzy matching: uppercase, strip punctuation and corp suffixes."""
+    n = (name or "").upper()
+    n = _re.sub(r"[^A-Z0-9 ]", " ", n)
+    # Strip trailing corporate suffixes repeatedly (e.g. "FOO HOLDINGS INC")
+    prev = None
+    while prev != n:
+        prev = n
+        n = _CORP_SUFFIXES.sub(" ", n)
+    return _re.sub(r"\s+", " ", n).strip()
+
+
+def import_sponsors(rows: list[dict]) -> int:
+    """Bulk import sponsor rows (replaces existing data)."""
+    import ast
+
+    def _f(v):
+        try:
+            return float(v) if v not in (None, "") else None
+        except ValueError:
+            return None
+
+    def _titles(v):
+        # CSV stores titles as a Python list repr; normalize to JSON
+        if not v:
+            return ""
+        try:
+            parsed = ast.literal_eval(v)
+            if isinstance(parsed, list):
+                return json.dumps(parsed)
+        except (ValueError, SyntaxError):
+            pass
+        return json.dumps([v])
+
+    with get_db() as db:
+        db.execute("DELETE FROM h1b_sponsors")
+        count = 0
+        for r in rows:
+            name = (r.get("company_name") or "").strip()
+            if not name:
+                continue
+            approvals = _f(r.get("Total Approvals"))
+            db.execute("""
+                INSERT INTO h1b_sponsors (name, name_norm, industry, website, city, state,
+                    executives, total_funding, latest_funding_stage, latest_funding_date,
+                    total_approvals, total_denials, approval_rate, median_salary, top_titles, has_h1b)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                name, normalize_sponsor_name(name),
+                r.get("industry", "") or "", r.get("website", "") or "",
+                (r.get("city", "") or "").title(), r.get("state", "") or "",
+                r.get("executive_officers", "") or "",
+                _f(r.get("total_funding")), r.get("latest_funding_stage", "") or "",
+                r.get("latest_funding_date", "") or "",
+                approvals, _f(r.get("Total Denials")), _f(r.get("Approval_Rate")),
+                _f(r.get("median_salary_offered")), _titles(r.get("top_job_titles_sponsored")),
+                1 if approvals is not None else 0,
+            ))
+            count += 1
+        return count
+
+
+def lookup_sponsor(company: str) -> dict | None:
+    """Find H-1B sponsorship data for a company by normalized name (exact, then prefix match)."""
+    norm = normalize_sponsor_name(company)
+    if not norm:
+        return None
+    with get_db() as db:
+        row = db.execute(
+            """SELECT * FROM h1b_sponsors
+               WHERE has_h1b = 1 AND (name_norm = ? OR name_norm LIKE ? OR ? LIKE name_norm || ' %')
+               ORDER BY (name_norm = ?) DESC, total_approvals DESC LIMIT 1""",
+            (norm, norm + " %", norm, norm),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def lookup_sponsor_executives(company: str) -> dict | None:
+    """Find any sponsor row (incl. funding-only) with executives listed, for outreach."""
+    norm = normalize_sponsor_name(company)
+    if not norm:
+        return None
+    with get_db() as db:
+        row = db.execute(
+            """SELECT name, executives, website, latest_funding_stage FROM h1b_sponsors
+               WHERE executives != '' AND (name_norm = ? OR name_norm LIKE ?)
+               ORDER BY (name_norm = ?) DESC LIMIT 1""",
+            (norm, norm + " %", norm),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_sponsors(search=None, min_approvals=None, min_rate=None, state=None,
+                 eng_only=False, sort="approvals", limit=50, offset=0):
+    clauses, params = ["has_h1b = 1"], []
+    if search:
+        clauses.append("(name LIKE ? OR top_titles LIKE ? OR city LIKE ?)")
+        params += [f"%{search}%"] * 3
+    if min_approvals is not None:
+        clauses.append("total_approvals >= ?")
+        params.append(min_approvals)
+    if min_rate is not None:
+        clauses.append("approval_rate >= ?")
+        params.append(min_rate)
+    if state:
+        clauses.append("state = ?")
+        params.append(state.upper())
+    if eng_only:
+        clauses.append("""(UPPER(top_titles) LIKE '%SOFTWARE%' OR UPPER(top_titles) LIKE '%ENGINEER%'
+            OR UPPER(top_titles) LIKE '%DEVELOPER%' OR UPPER(top_titles) LIKE '%DATA%')""")
+    where = "WHERE " + " AND ".join(clauses)
+    order = {
+        "approvals": "total_approvals DESC",
+        "rate": "approval_rate DESC, total_approvals DESC",
+        "salary": "median_salary DESC NULLS LAST",
+        "name": "name COLLATE NOCASE ASC",
+    }.get(sort, "total_approvals DESC")
+    with get_db() as db:
+        rows = db.execute(
+            f"SELECT * FROM h1b_sponsors {where} ORDER BY {order} LIMIT ? OFFSET ?",
+            params + [limit, offset],
+        ).fetchall()
+        total = db.execute(f"SELECT COUNT(*) FROM h1b_sponsors {where}", params).fetchone()[0]
+        return {"sponsors": [dict(r) for r in rows], "total": total}
+
+
+def sponsor_counts() -> dict:
+    with get_db() as db:
+        total = db.execute("SELECT COUNT(*) FROM h1b_sponsors").fetchone()[0]
+        h1b = db.execute("SELECT COUNT(*) FROM h1b_sponsors WHERE has_h1b = 1").fetchone()[0]
+        return {"total": total, "with_h1b": h1b}
 
 
 if __name__ == "__main__":
