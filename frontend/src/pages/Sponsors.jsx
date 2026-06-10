@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import LinkedInIdEditor from '../components/LinkedInIdEditor'
 
@@ -17,6 +18,9 @@ export default function Sponsors() {
   const [sort, setSort] = useState('approvals')
   const [page, setPage] = useState(0)
   const [expanded, setExpanded] = useState(null)
+  const [scanning, setScanning] = useState(null)
+  const [scanResults, setScanResults] = useState({})
+  const navigate = useNavigate()
 
   useEffect(() => {
     const t = setTimeout(() => { setSearchDebounced(search); setPage(0) }, 300)
@@ -44,6 +48,18 @@ export default function Sponsors() {
   const jobsSearchUrl = (name) => {
     const clean = name.replace(/\b(INC|CORP|LLC|LTD|CO|CORPORATION|INCORPORATED)\b\.?/gi, '').trim()
     return `https://www.google.com/search?q=${encodeURIComponent(`${clean} careers software engineer`)}`
+  }
+
+  const handleScanJobs = async (s) => {
+    setScanning(s.id)
+    try {
+      const res = await api.scanSponsorJobs(s.id)
+      setScanResults(prev => ({ ...prev, [s.id]: res }))
+    } catch (e) {
+      setScanResults(prev => ({ ...prev, [s.id]: { error: e.message } }))
+    } finally {
+      setScanning(null)
+    }
   }
 
   return (
@@ -147,18 +163,38 @@ export default function Sponsors() {
                     </div>
                   )}
                   <div className="flex gap-2 pt-1 items-center flex-wrap">
+                    <button onClick={e => { e.stopPropagation(); handleScanJobs(s) }} disabled={scanning === s.id}
+                      className="text-xs px-2.5 py-1 rounded-md bg-emerald-900/20 text-emerald-400 hover:bg-emerald-900/30 disabled:opacity-50 transition-all btn-press">
+                      {scanning === s.id ? 'Scanning ATS...' : 'Scan for Jobs'}
+                    </button>
                     <button onClick={e => { e.stopPropagation(); handleFindRecruiters(s.name) }}
                       className="text-xs px-2.5 py-1 rounded-md bg-sky-900/20 text-sky-400 hover:bg-sky-900/30 transition-all btn-press">
                       Find Recruiters ↗
                     </button>
                     <a href={jobsSearchUrl(s.name)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
                       className="text-xs px-2.5 py-1 rounded-md bg-surface-overlay text-text-secondary hover:bg-border transition-all btn-press border border-border">
-                      Find Open Roles ↗
+                      Google Careers ↗
                     </a>
                     <span onClick={e => e.stopPropagation()}>
                       <LinkedInIdEditor company={s.name} compact />
                     </span>
                   </div>
+                  {scanResults[s.id] && (
+                    <div className="text-xs pt-1 animate-fade-in">
+                      {scanResults[s.id].error ? (
+                        <span className="text-red-400">{scanResults[s.id].error}</span>
+                      ) : scanResults[s.id].found > 0 ? (
+                        <span className="text-emerald-400">
+                          Found {scanResults[s.id].found} US roles on {scanResults[s.id].ats} — {scanResults[s.id].added} new added to queue.{' '}
+                          {scanResults[s.id].added > 0 && (
+                            <button onClick={e => { e.stopPropagation(); navigate('/jobs') }} className="text-accent hover:underline">View in Queue →</button>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-text-muted">No public ATS board found (tried Greenhouse, Lever, Ashby). Try the careers site link.</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

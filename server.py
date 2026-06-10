@@ -2256,6 +2256,105 @@ def sponsor_executives(company: str):
     return {"found": True, **info}
 
 
+def _sponsor_slug_candidates(name: str, website: str) -> list[str]:
+    """Guess ATS board slugs from a sponsor's legal name and website domain."""
+    base = db.normalize_sponsor_name(name).lower()
+    words = base.split()
+    cands = []
+    if website:
+        domain = re.sub(r"^https?://(www\.)?", "", website.lower()).split("/")[0]
+        stem = domain.split(".")[0]
+        if stem and len(stem) >= 2:
+            cands.append(stem)
+    if words:
+        cands.append("".join(words))
+        cands.append("-".join(words))
+        cands.append(words[0])
+    seen, out = set(), []
+    for c in cands:
+        if c and len(c) >= 2 and c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+@app.post("/api/sponsors/{sponsor_id}/scan-jobs")
+def sponsor_scan_jobs(sponsor_id: int):
+    """Probe the sponsor's ATS (Greenhouse/Lever/Ashby) via slug guesses and add open US roles to the queue."""
+    import ats_discovery as ats
+
+    with db.get_db() as conn:
+        row = conn.execute("SELECT * FROM h1b_sponsors WHERE id = ?", (sponsor_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Sponsor not found")
+    sponsor = dict(row)
+
+    display_name = db.normalize_sponsor_name(sponsor["name"]).title()
+    if db.is_company_blocked(display_name):
+        return {"found": 0, "added": 0, "ats": None, "error": "Company is blocked"}
+
+    candidates = _sponsor_slug_candidates(sponsor["name"], sponsor.get("website", ""))
+
+    found, ats_name, slug_used = [], None, None
+    # Sponsor scans want the whole board, not just the last day —
+    # _is_fresh binds FRESHNESS_DAYS as a default arg, so swap the function itself
+    _orig_is_fresh = ats._is_fresh
+    ats._is_fresh = lambda dt, days=30, hours=None: _orig_is_fresh(dt, days=30)
+    try:
+        for slug in candidates:
+            for fetcher, label in [
+                (ats.fetch_greenhouse, "greenhouse"),
+                (ats.fetch_lever, "lever"),
+                (ats.fetch_ashby, "ashby"),
+            ]:
+                try:
+                    jobs = fetcher(slug, display_name)
+                except Exception:
+                    jobs = []
+                if jobs:
+                    found, ats_name, slug_used = jobs, label, slug
+                    break
+            if found:
+                break
+    finally:
+        ats._is_fresh = _orig_is_fresh
+
+    if not found:
+        return {"found": 0, "added": 0, "ats": None, "tried_slugs": candidates}
+
+    ENG_TITLE_KEYWORDS = (
+        "engineer", "developer", "software", "swe", "sde", "data scientist",
+        "machine learning", "devops", "sre", "full stack", "fullstack",
+        "backend", "back end", "frontend", "front end", "infrastructure", "platform",
+    )
+    now = datetime.now(timezone.utc).isoformat()
+    entries = []
+    for j in found:
+        title = j.get("job_title", "")
+        tl = title.lower()
+        if any(kw in tl for kw in SKIP_TITLE_KEYWORDS):
+            continue
+        if not any(kw in tl for kw in ENG_TITLE_KEYWORDS):
+            continue
+        link = j.get("job_apply_link", "")
+        entries.append({
+            "id": _job_id(display_name, title, link),
+            "title": title,
+            "company": display_name,
+            "location": j.get("job_city", "") or "",
+            "apply_link": link,
+            "ats": ats_name,
+            "description": j.get("job_description", ""),
+            "posted_at": j.get("job_posted_at_datetime_utc", "") or "",
+            "discovered_at": now,
+            "source": "sponsor_scan",
+            "query": f"sponsor:{sponsor['name']}",
+        })
+    added = db.upsert_jobs(entries)
+    _log(f"[sponsor-scan] {display_name}: {ats_name}/{slug_used} -> {len(found)} jobs, {added} new")
+    return {"found": len(entries), "added": added, "ats": ats_name, "slug": slug_used}
+
+
 @app.post("/api/jobs/fix-workday-urls")
 def fix_workday_urls():
     companies = json.loads(Path("companies.json").read_text())
