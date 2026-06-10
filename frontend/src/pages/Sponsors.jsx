@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api'
+import LinkedInIdEditor from '../components/LinkedInIdEditor'
 
 const PAGE_SIZE = 25
 
@@ -34,9 +35,11 @@ export default function Sponsors() {
 
   const totalPages = Math.ceil(data.total / PAGE_SIZE)
 
-  const linkedinPeopleUrl = (name) => {
-    const clean = name.replace(/\b(INC|CORP|LLC|LTD|CO|CORPORATION|INCORPORATED)\b\.?/gi, '').trim()
-    return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(`"${clean}" recruiter OR "talent acquisition"`)}`
+  const handleFindRecruiters = async (name) => {
+    try {
+      const res = await api.linkedinRecruiterSearch(name)
+      window.open(res.url, '_blank')
+    } catch (_) {}
   }
   const jobsSearchUrl = (name) => {
     const clean = name.replace(/\b(INC|CORP|LLC|LTD|CO|CORPORATION|INCORPORATED)\b\.?/gi, '').trim()
@@ -143,15 +146,18 @@ export default function Sponsors() {
                       All sponsored roles: <span className="text-text-secondary">{s.top_titles.join(', ')}</span>
                     </div>
                   )}
-                  <div className="flex gap-2 pt-1">
-                    <a href={linkedinPeopleUrl(s.name)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+                  <div className="flex gap-2 pt-1 items-center flex-wrap">
+                    <button onClick={e => { e.stopPropagation(); handleFindRecruiters(s.name) }}
                       className="text-xs px-2.5 py-1 rounded-md bg-sky-900/20 text-sky-400 hover:bg-sky-900/30 transition-all btn-press">
                       Find Recruiters ↗
-                    </a>
+                    </button>
                     <a href={jobsSearchUrl(s.name)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
                       className="text-xs px-2.5 py-1 rounded-md bg-surface-overlay text-text-secondary hover:bg-border transition-all btn-press border border-border">
                       Find Open Roles ↗
                     </a>
+                    <span onClick={e => e.stopPropagation()}>
+                      <LinkedInIdEditor company={s.name} compact />
+                    </span>
                   </div>
                 </div>
               )}

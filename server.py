@@ -1894,6 +1894,36 @@ def linkedin_search(job_id: str):
     return {"url": url, "query": query, "title_filter": title_filter, "company": company, "linkedin_id": linkedin_id, "verified": verified}
 
 
+@app.get("/api/linkedin-recruiter-search")
+def linkedin_recruiter_search(company: str):
+    """Recruiter people-search URL for any company name (no job required).
+    Uses the LinkedIn company-ID system (overrides + companies.json) like the Job Queue search."""
+    raw = company.strip()
+    if not raw:
+        raise HTTPException(400, "company query param required")
+    # Sponsor dataset uses legal names (UBER TECHNOLOGIES INC) — try raw, then stripped
+    clean = db.normalize_sponsor_name(raw).title()
+    linkedin_id, verified = _get_linkedin_id(raw)
+    if not linkedin_id:
+        linkedin_id, verified = _get_linkedin_id(clean)
+
+    title_filter = "recruiter OR talent acquisition OR sourcer"
+    if linkedin_id:
+        query = 'recruiter OR "talent acquisition" OR sourcer'
+    else:
+        query = f"{clean} recruiter"
+
+    url = "https://www.linkedin.com/search/results/people/?"
+    url += f"keywords={urllib.parse.quote(query)}"
+    url += f"&titleFreeText={urllib.parse.quote(title_filter)}"
+    url += "&geoUrn=%5B%22103644278%22%5D"
+    url += "&origin=FACETED_SEARCH"
+    if linkedin_id:
+        url += f"&currentCompany=%5B%22{linkedin_id}%22%5D"
+
+    return {"url": url, "company": clean, "linkedin_id": linkedin_id, "verified": verified}
+
+
 @app.get("/api/linkedin-id")
 def get_linkedin_id(company: str = ""):
     if not company.strip():
