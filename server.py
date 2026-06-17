@@ -235,6 +235,14 @@ def job_stats():
 def evaluated_jobs():
     return db.get_evaluated_jobs()
 
+@app.get("/api/jobs/unmatched-ids")
+def unmatched_ids():
+    with db.get_db() as conn:
+        rows = conn.execute(
+            "SELECT id FROM jobs WHERE status = 'pending' AND match_pct IS NULL ORDER BY discovered_at DESC"
+        ).fetchall()
+        return {"ids": [r["id"] for r in rows]}
+
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str):
     job = db.get_job(job_id)
@@ -2215,6 +2223,15 @@ def cleanup_non_us():
 def cleanup_irrelevant():
     count = db.cleanup_irrelevant_jobs()
     return {"deleted": count}
+
+@app.post("/api/jobs/skip-low-scores")
+def skip_low_scores(threshold: int = 60):
+    with db.get_db() as conn:
+        r = conn.execute(
+            "UPDATE jobs SET status = 'skipped', acted_at = ? WHERE status = 'pending' AND match_pct IS NOT NULL AND match_pct < ?",
+            (datetime.now(timezone.utc).isoformat(), threshold),
+        )
+        return {"skipped": r.rowcount, "threshold": threshold}
 
 @app.post("/api/jobs/clear-queue")
 def clear_queue():

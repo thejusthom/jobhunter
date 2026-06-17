@@ -451,25 +451,24 @@ export default function JobQueue() {
   const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 })
 
   const handleMatchAll = async () => {
-    const unmatched = jobs.filter(j => j.match_pct == null)
-    if (unmatched.length === 0) return alert('All jobs on this page are already matched')
-    if (!confirm(`Run AI match + outreach on ${unmatched.length} unmatched jobs?`)) return
+    const { ids } = await api.getUnmatchedIds()
+    if (ids.length === 0) return alert('All pending jobs are already matched')
+    if (!confirm(`Run AI match + outreach on ${ids.length} unmatched jobs across all pages?`)) return
 
     setBatchMatching(true)
-    setBatchProgress({ done: 0, total: unmatched.length })
+    setBatchProgress({ done: 0, total: ids.length })
 
-    for (let i = 0; i < unmatched.length; i++) {
-      const job = unmatched[i]
+    for (let i = 0; i < ids.length; i++) {
       try {
-        const result = await api.matchJob(job.id)
-        // Auto-generate outreach for decent matches (same as single match)
+        const result = await api.matchJob(ids[i])
         if (result.match_pct >= 50) {
           try {
-            await api.generateOutreach(job.id, {})
+            await api.generateOutreach(ids[i], {})
           } catch (_) { /* outreach is bonus */ }
         }
       } catch (_) { /* continue on error */ }
-      setBatchProgress({ done: i + 1, total: unmatched.length })
+      setBatchProgress({ done: i + 1, total: ids.length })
+      if ((i + 1) % 5 === 0) load(true)
     }
 
     setBatchMatching(false)
@@ -490,27 +489,46 @@ export default function JobQueue() {
       {/* Job list — full width on mobile, fixed width on desktop */}
       <div className={`w-full md:w-[480px] shrink-0 min-w-0 flex flex-col overflow-hidden transition-all duration-300 ${selected ? 'hidden md:flex' : 'flex'}`}>
         {/* Header row */}
-        <div className="flex items-center gap-2 mb-2 animate-fade-in">
-          <h1 className="text-lg font-semibold text-text-primary">Job Queue</h1>
-          {jobs.length > 0 && (
-            <button
-              onClick={handleMatchAll}
-              disabled={batchMatching}
-              className="text-xs text-accent/70 hover:text-accent disabled:opacity-50 transition-all duration-150 btn-press"
-            >
-              {batchMatching ? `Matching ${batchProgress.done}/${batchProgress.total}...` : `Match All${jobs.filter(j => j.match_pct == null).length > 0 ? ` (${jobs.filter(j => j.match_pct == null).length})` : ''}`}
-            </button>
-          )}
-          {filter === 'pending' && jobs.length > 0 && (
-            <button
-              onClick={handleClearQueue}
-              className="text-xs text-danger/60 hover:text-danger transition-all duration-150 btn-press"
-            >
-              Clear
-            </button>
-          )}
+        <div className="flex items-center gap-3 mb-2 animate-fade-in">
+          <h1 className="text-lg font-semibold text-text-primary whitespace-nowrap">Job Queue</h1>
+          <div className="flex items-center gap-2 ml-auto">
+            {(jobs.length > 0 || batchMatching) && (
+              <button
+                onClick={handleMatchAll}
+                disabled={batchMatching}
+                className={`text-xs transition-all duration-150 btn-press whitespace-nowrap ${batchMatching ? 'text-accent font-medium' : 'text-accent/70 hover:text-accent disabled:opacity-50'}`}
+              >
+                {batchMatching ? `Matching ${batchProgress.done}/${batchProgress.total}...` : 'Match All'}
+              </button>
+            )}
+            {filter === 'pending' && jobs.length > 0 && (
+              <button
+                onClick={async () => {
+                  if (!confirm('Skip all matched jobs with score below 60?')) return
+                  const res = await api.skipLowScores(60)
+                  alert(`Skipped ${res.skipped} jobs below 60%`)
+                  setSelected(null)
+                  setMatchResult(null)
+                  load()
+                }}
+                className="text-xs text-warning/70 hover:text-warning transition-all duration-150 btn-press whitespace-nowrap"
+              >
+                Skip &lt; 60
+              </button>
+            )}
+            {filter === 'pending' && jobs.length > 0 && (
+              <button
+                onClick={handleClearQueue}
+                className="text-xs text-danger/60 hover:text-danger transition-all duration-150 btn-press whitespace-nowrap"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 mb-2">
           <form
-            className="flex gap-1.5 ml-auto"
+            className="flex gap-1.5 w-full"
             onSubmit={async (e) => {
               e.preventDefault()
               if (!addUrl.trim() || addingUrl) return

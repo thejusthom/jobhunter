@@ -55,6 +55,8 @@ export const api = {
   getAnalytics: () => request('/analytics'),
   cleanupNonUs: () => request('/jobs/cleanup-non-us', { method: 'POST' }),
   cleanupIrrelevant: () => request('/jobs/cleanup-irrelevant', { method: 'POST' }),
+  skipLowScores: (threshold = 60) => request(`/jobs/skip-low-scores?threshold=${threshold}`, { method: 'POST' }),
+  getUnmatchedIds: () => request('/jobs/unmatched-ids'),
   getCollectedEmails: (params = {}) => {
     const q = new URLSearchParams(params).toString();
     return request(`/collected-emails${q ? '?' + q : ''}`);
