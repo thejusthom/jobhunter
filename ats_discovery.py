@@ -262,60 +262,57 @@ def fetch_lever(slug: str, company_name: str) -> list:
 # Ashby — US filter
 # ---------------------------------------------------------------------------
 
-def fetch_ashby(slug: str, company_name: str) -> list:
-    """Use Ashby's public GraphQL endpoint (the old /posting-api is dead)."""
-    gql_url = "https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobBoardWithTeams"
-    query = (
-        "query ApiJobBoardWithTeams($organizationHostedJobsPageName: String!) { "
-        "jobBoard: jobBoardWithTeams(organizationHostedJobsPageName: $organizationHostedJobsPageName) { "
-        "jobPostings { id title locationName employmentType secondaryLocations { locationName } } } }"
-    )
-    body = {
-        "operationName": "ApiJobBoardWithTeams",
-        "variables": {"organizationHostedJobsPageName": slug},
-        "query": query,
-    }
+def _fetch_ashby_rest(slug: str, company_name: str) -> list | None:
+    """Try the Ashby public REST API which returns publishedAt."""
+    rest_url = f"https://api.ashbyhq.com/posting-api/job-board/{slug}"
     try:
-        resp = requests.post(gql_url, json=body, timeout=8, headers={"Content-Type": "application/json"})
+        resp = requests.get(rest_url, timeout=8, headers={"Accept": "application/json"})
+        if resp.status_code == 404:
+            return None
         if resp.status_code != 200:
-            _log(f"[ats] Ashby '{slug}' returned {resp.status_code}")
-            return []
-        data = resp.json().get("data", {})
-        board = data.get("jobBoard")
-        if not board:
-            _log(f"[ats] Ashby '{slug}' not found")
-            return []
-        jobs = board.get("jobPostings", []) or []
-    except Exception as e:
-        _log(f"[ats] Ashby {slug} failed: {e}")
-        return []
+            return None
+        data = resp.json()
+        jobs = data.get("jobs", []) or []
+    except Exception:
+        return None
 
     results = []
     for j in jobs:
-        loc = j.get("locationName", "") or ""
-        # Aggregate secondary locations into the check too
-        secondary = " ".join(s.get("locationName", "") for s in (j.get("secondaryLocations") or []))
+        published = j.get("publishedAt", "")
+        if not published:
+            continue
+        try:
+            dt = datetime.fromisoformat(published.replace("Z", "+00:00"))
+            if not _is_fresh(dt):
+                continue
+        except (ValueError, TypeError):
+            continue
+
+        loc = j.get("location", "") or ""
+        secondary = " ".join(s.get("location", "") for s in (j.get("secondaryLocations") or []))
         loc_for_filter = (loc + " " + secondary).strip()
         if not _is_us_location(loc_for_filter):
             continue
-
-        job_id = j.get("id", "")
-        apply_url = f"https://jobs.ashbyhq.com/{slug}/{job_id}"
-
-        # Skip per-job description fetch in bulk discovery — it would add ~50 extra requests.
-        # Description can be fetched on-demand via _fetch_jd_from_url(apply_url).
         results.append({
             "employer_name": company_name,
             "job_title": j.get("title", ""),
             "job_description": "",
-            "job_apply_link": apply_url,
+            "job_apply_link": j.get("applyUrl") or j.get("jobUrl") or f"https://jobs.ashbyhq.com/{slug}/{j.get('id', '')}",
             "job_city": loc,
             "job_country": "US",
             "job_apply_is_direct": True,
-            "job_posted_at_datetime_utc": "",
+            "job_posted_at_datetime_utc": published,
             "_ats": "ashby",
         })
     return results
+
+
+def fetch_ashby(slug: str, company_name: str) -> list:
+    """Fetch from Ashby REST API (has publishedAt)."""
+    result = _fetch_ashby_rest(slug, company_name)
+    if result is not None:
+        return result
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -753,7 +750,7 @@ def fetch_workday(slug: str, company_name: str, wd_num: int = 5, site: str = "")
 # ---------------------------------------------------------------------------
 
 def fetch_pinpoint(slug: str, company_name: str) -> list:
-    url = f"https://{slug}.pinpointhq.com/postings.json"
+    url = f"https://{slug}.pinpointhq.com/jobs.json"
     try:
         resp = requests.get(url, timeout=15)
         if resp.status_code == 404:
@@ -761,7 +758,7 @@ def fetch_pinpoint(slug: str, company_name: str) -> list:
             return []
         resp.raise_for_status()
         data = resp.json()
-        postings = data.get("data", data) if isinstance(data, dict) else data
+        postings = data.get("data", []) if isinstance(data, dict) else data
         if not isinstance(postings, list):
             postings = []
     except Exception as e:
@@ -773,26 +770,14 @@ def fetch_pinpoint(slug: str, company_name: str) -> list:
         loc = j.get("location", {})
         if isinstance(loc, dict):
             loc_name = loc.get("name", "") or loc.get("city", "")
-            country = loc.get("country", "")
         else:
             loc_name = str(loc)
-            country = ""
 
-        if country and country.lower() not in ("us", "usa", "united states", ""):
+        if not _is_us_location(loc_name):
             continue
-        if not _is_us_location(loc_name) and country == "":
-            continue
-
-        published = j.get("published_at", "") or j.get("created_at", "")
-        try:
-            dt = datetime.fromisoformat(published.replace("Z", "+00:00"))
-            if not _is_fresh(dt):
-                continue
-        except (ValueError, TypeError):
-            pass
 
         description = _strip_html(j.get("description", ""))
-        jd_url = j.get("url", "") or f"https://{slug}.pinpointhq.com/en/postings/{j.get('id', '')}"
+        jd_url = j.get("url", "") or f"https://{slug}.pinpointhq.com/en/jobs/{j.get('id', '')}"
 
         results.append({
             "employer_name": company_name,
@@ -802,7 +787,7 @@ def fetch_pinpoint(slug: str, company_name: str) -> list:
             "job_city": loc_name,
             "job_country": "US",
             "job_apply_is_direct": True,
-            "job_posted_at_datetime_utc": published,
+            "job_posted_at_datetime_utc": "",
             "_ats": "pinpoint",
         })
     return results
