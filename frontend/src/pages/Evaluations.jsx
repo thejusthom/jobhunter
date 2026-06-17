@@ -35,7 +35,14 @@ export default function Evaluations() {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-text-primary font-semibold text-sm truncate">{ev.title}</div>
-                  <div className="text-sm text-text-tertiary">{ev.company}</div>
+                  <div className="text-sm text-text-tertiary">
+                    {ev.company}
+                    {ev.prev_applications > 0 && (
+                      <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                        {ev.prev_applications} prev {ev.prev_applications === 1 ? 'app' : 'apps'}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                   {ev.match_pct != null && (

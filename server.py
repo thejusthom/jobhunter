@@ -195,6 +195,11 @@ def _sponsor_for_company(company: str) -> tuple | None:
     )
 
 
+@functools.lru_cache(maxsize=2048)
+def _apps_for_company(company: str) -> int:
+    return db.count_applications_by_company(company)
+
+
 def _attach_sponsor(job: dict) -> dict:
     info = _sponsor_for_company(job.get("company") or "")
     if info:
@@ -205,6 +210,7 @@ def _attach_sponsor(job: dict) -> dict:
         }
     else:
         job["h1b_sponsor"] = None
+    job["prev_applications"] = _apps_for_company(job.get("company") or "")
     return job
 
 @app.get("/api/jobs")
@@ -835,6 +841,7 @@ def create_application(body: ApplicationCreate):
     app_id = db.create_application(**body.model_dump())
     if body.job_id:
         db.update_job(body.job_id, status="applied")
+    _apps_for_company.cache_clear()
     return {"id": app_id}
 
 class ApplicationAddByUrl(BaseModel):
@@ -914,6 +921,7 @@ def add_application_by_url(body: ApplicationAddByUrl):
         source=ats_type or "manual_url",
     )
 
+    _apps_for_company.cache_clear()
     return {"id": app_id, "title": title, "company": company, "location": location, "job_id": jid}
 
 @app.patch("/api/applications/{app_id}")
@@ -2192,7 +2200,10 @@ def dashboard():
 
 @app.get("/api/evaluations")
 def list_evaluations(limit: int = 50):
-    return db.get_evaluated_jobs(limit=limit)
+    evals = db.get_evaluated_jobs(limit=limit)
+    for ev in evals:
+        ev["prev_applications"] = _apps_for_company(ev.get("company") or "")
+    return evals
 
 
 @app.post("/api/jobs/cleanup-non-us")

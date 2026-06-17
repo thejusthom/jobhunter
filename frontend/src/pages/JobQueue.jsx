@@ -662,7 +662,23 @@ export default function JobQueue() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="font-medium text-text-primary text-sm truncate group-hover:text-accent transition-colors duration-200">{job.title}</div>
-                      <div className="text-sm text-text-tertiary mt-0.5 truncate">{job.company} {job.location && `· ${job.location}`}</div>
+                      <div className="flex items-center gap-1.5 mt-0.5 text-sm text-text-tertiary">
+                        <span className="truncate">{job.company} {job.location && `· ${job.location}`}</span>
+                        {job.h1b_sponsor && (
+                          <span
+                            className="px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide shrink-0"
+                            style={{ backgroundColor: '#05966922', color: '#34d399', borderColor: '#05966944', borderWidth: '1px' }}
+                            title={`Sponsored ${Math.round(job.h1b_sponsor.total_approvals)} H-1Bs · ${Math.round(job.h1b_sponsor.approval_rate)}% approval`}
+                          >H1B ✓</span>
+                        )}
+                        {job.prev_applications > 0 && (
+                          <span
+                            className="px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0"
+                            style={{ backgroundColor: '#6366f122', color: '#a5b4fc', borderColor: '#6366f144', borderWidth: '1px' }}
+                            title={`You've applied to ${job.prev_applications} other role${job.prev_applications > 1 ? 's' : ''} at this company`}
+                          >{job.prev_applications} prev {job.prev_applications === 1 ? 'app' : 'apps'}</span>
+                        )}
+                      </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       {job.match_pct != null && (
@@ -699,13 +715,6 @@ export default function JobQueue() {
                           return `≤${fmt(job.salary_max)}`
                         })()}
                       </span>
-                    )}
-                    {job.h1b_sponsor && (
-                      <span
-                        className="px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide"
-                        style={{ backgroundColor: '#05966922', color: '#34d399', borderColor: '#05966944', borderWidth: '1px' }}
-                        title={`Sponsored ${Math.round(job.h1b_sponsor.total_approvals)} H-1Bs · ${Math.round(job.h1b_sponsor.approval_rate)}% approval`}
-                      >H1B ✓</span>
                     )}
                     {job.posted_at && <span className="ml-1">Posted {timeAgo(job.posted_at)}</span>}
                   </div>
@@ -761,18 +770,6 @@ export default function JobQueue() {
                     <p className="text-text-tertiary text-sm">{selected.company} · {selected.location}</p>
                     <LinkedInIdEditor company={selected.company} compact />
                   </div>
-                  {selected.h1b_sponsor && (
-                    <div className="flex items-center gap-2 mt-1.5 flex-wrap text-xs">
-                      <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-medium"
-                        title={selected.h1b_sponsor.top_titles?.length ? `Sponsored roles: ${selected.h1b_sponsor.top_titles.join(', ')}` : ''}>
-                        ✓ H-1B Sponsor
-                      </span>
-                      <span className="text-text-tertiary">
-                        {Math.round(selected.h1b_sponsor.total_approvals)} approvals · {Math.round(selected.h1b_sponsor.approval_rate)}% rate
-                        {selected.h1b_sponsor.median_salary > 0 && ` · $${Math.round(selected.h1b_sponsor.median_salary / 1000)}K median`}
-                      </span>
-                    </div>
-                  )}
                 </div>
               </div>
 
@@ -856,6 +853,29 @@ export default function JobQueue() {
                 <button onClick={() => handleBlockCompany('no sponsorship', selected)}
                   className="text-[11px] px-2 py-1 rounded-md text-danger/60 hover:text-danger bg-red-900/10 transition-all duration-200 btn-press">Block Co.</button>
               </div>
+
+              {/* H-1B / prev applications info */}
+              {(selected.h1b_sponsor || selected.prev_applications > 0) && (
+                <div className="flex items-center gap-2 flex-wrap text-xs animate-fade-in" style={{ animationDelay: '175ms' }}>
+                  {selected.h1b_sponsor && (
+                    <>
+                      <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-medium"
+                        title={selected.h1b_sponsor.top_titles?.length ? `Sponsored roles: ${selected.h1b_sponsor.top_titles.join(', ')}` : ''}>
+                        ✓ H-1B Sponsor
+                      </span>
+                      <span className="text-text-tertiary">
+                        {Math.round(selected.h1b_sponsor.total_approvals)} approvals · {Math.round(selected.h1b_sponsor.approval_rate)}% rate
+                        {selected.h1b_sponsor.median_salary > 0 && ` · $${Math.round(selected.h1b_sponsor.median_salary / 1000)}K median`}
+                      </span>
+                    </>
+                  )}
+                  {selected.prev_applications > 0 && (
+                    <span className="px-2 py-0.5 rounded-md bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 font-medium">
+                      {selected.prev_applications} previous {selected.prev_applications === 1 ? 'application' : 'applications'}
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* Row 3: Outreach + tools */}
               <div className="flex gap-1.5 sm:gap-2 flex-wrap items-center animate-fade-in" style={{ animationDelay: '200ms' }}>

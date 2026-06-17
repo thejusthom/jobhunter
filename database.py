@@ -610,6 +610,14 @@ def get_evaluated_jobs(limit=20):
 
 # --- Application queries ---
 
+def count_applications_by_company(company: str) -> int:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM applications WHERE LOWER(company) = LOWER(?)", (company,)
+        ).fetchone()
+        return row[0] if row else 0
+
+
 def get_applications(status=None, search=None, limit=100, offset=0):
     clauses, params = [], []
     if status:
