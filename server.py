@@ -2145,6 +2145,40 @@ def list_collected_emails(company: str = None, limit: int = 200, offset: int = 0
 # Dashboard stats
 # ---------------------------------------------------------------------------
 
+def _search_coverage() -> dict:
+    """How many companies/ATS platforms each discovery run hits."""
+    import collections
+
+    # Curated companies.json
+    curated_by_ats = collections.Counter()
+    try:
+        companies = json.loads(Path("companies.json").read_text())
+        for c in companies:
+            curated_by_ats[(c.get("ats") or "unset").lower()] += 1
+    except Exception:
+        companies = []
+
+    # Resolved H-1B sponsor boards
+    sponsors = db.get_resolved_sponsors()
+    sponsor_by_ats = collections.Counter(s["ats_type"] for s in sponsors)
+    sp_counts = db.sponsor_counts()
+
+    platforms = sorted(set(curated_by_ats) | set(sponsor_by_ats) - {"unset"})
+    return {
+        "curated_companies": len(companies),
+        "sponsor_boards": len(sponsors),
+        "total_boards": len(companies) + len(sponsors),
+        "platforms": len([p for p in platforms if p and p != "unset"]),
+        "curated_by_ats": dict(curated_by_ats.most_common()),
+        "sponsor_by_ats": dict(sponsor_by_ats.most_common()),
+        "sponsor_probe": {
+            "with_h1b": sp_counts["with_h1b"],
+            "checked": sp_counts["ats_checked"],
+            "resolved": sp_counts["ats_resolved"],
+        },
+    }
+
+
 @app.get("/api/dashboard")
 def dashboard():
     return {
@@ -2152,6 +2186,7 @@ def dashboard():
         "app_stats": db.get_application_stats(),
         "due_reminders": db.get_due_reminders(),
         "discovery": discovery_status,
+        "coverage": _search_coverage(),
     }
 
 

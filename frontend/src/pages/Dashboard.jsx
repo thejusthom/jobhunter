@@ -47,7 +47,7 @@ export default function Dashboard() {
   if (loading) return <p className="text-text-muted animate-pulse">Loading dashboard...</p>
   if (!data) return <p className="text-danger">Failed to load dashboard</p>
 
-  const { job_stats, app_stats, due_reminders, discovery } = data
+  const { job_stats, app_stats, due_reminders, discovery, coverage } = data
 
   return (
     <div className="space-y-6">
@@ -75,6 +75,47 @@ export default function Dashboard() {
         <StatCard label="Interviews" value={app_stats.interview || 0} />
         <StatCard label="This Week" value={app_stats.this_week || 0} />
       </div>
+
+      {coverage && (
+        <div className="bg-surface-raised border border-border rounded-xl p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-text-primary font-semibold">Search Coverage</h3>
+            <Link to="/sponsors" className="text-accent text-sm hover:underline">Manage sponsors</Link>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            <StatCard label="Company boards" value={coverage.total_boards} />
+            <StatCard label="ATS platforms" value={coverage.platforms} />
+            <StatCard label="Curated companies" value={coverage.curated_companies} />
+            <StatCard label="Sponsor boards" value={coverage.sponsor_boards} />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <div>
+              <div className="text-text-tertiary text-xs uppercase tracking-wide mb-2">Curated by ATS</div>
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(coverage.curated_by_ats).map(([ats, n]) => (
+                  <span key={ats} className="px-2 py-0.5 rounded-md bg-surface-overlay border border-border text-text-secondary text-xs">
+                    {ats} <span className="text-text-primary font-medium">{n}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="text-text-tertiary text-xs uppercase tracking-wide mb-2">Sponsor boards by ATS</div>
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(coverage.sponsor_by_ats).map(([ats, n]) => (
+                  <span key={ats} className="px-2 py-0.5 rounded-md bg-emerald-900/15 border border-emerald-500/20 text-emerald-300 text-xs">
+                    {ats} <span className="font-medium">{n}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="text-xs text-text-muted mt-4 pt-3 border-t border-border/50">
+            H-1B sponsor probe: {coverage.sponsor_probe.resolved} boards found from {coverage.sponsor_probe.checked} checked
+            {' '}({coverage.sponsor_probe.with_h1b} sponsors with H-1B history in dataset)
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="bg-surface-raised border border-border rounded-xl p-5">
