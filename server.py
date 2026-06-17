@@ -806,30 +806,14 @@ def add_job_by_url(body: AddJobByUrl):
             overwrite["location"] = location
         db.update_job(jid, **overwrite)
     else:
-        entry = {
-            "id": jid,
-            "title": title,
-            "company": company,
-            "location": location,
-            "apply_link": apply_link,
-            "ats": ats_type,
-            "score": 0,
-            "description": description,
-            "posted_at": "",
-            "discovered_at": datetime.now(timezone.utc).isoformat(),
-            "source": "manual_url",
-            "query": "",
-        }
-        db.upsert_jobs([entry])
-        # Force-update key fields in case the job already existed with stale data
-        overwrite = {}
-        if title: overwrite["title"] = title
-        if company: overwrite["company"] = company
-        if location: overwrite["location"] = location
-        if description: overwrite["description"] = description
-        if ats_type: overwrite["ats"] = ats_type
-        if overwrite:
-            db.update_job(jid, **overwrite)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with db.get_db() as conn:
+            conn.execute("""
+                INSERT OR IGNORE INTO jobs (id, title, company, location, apply_link, ats, score,
+                    description, posted_at, discovered_at, source, query, status)
+                VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'manual_url', '', 'pending')
+            """, (jid, title, company, location, apply_link, ats_type,
+                  description, now_iso, now_iso))
 
     return _parse_json_fields(db.get_job(jid))
 
@@ -2172,6 +2156,11 @@ def list_evaluations(limit: int = 50):
 @app.post("/api/jobs/cleanup-non-us")
 def cleanup_non_us():
     count = db.delete_non_us_jobs()
+    return {"deleted": count}
+
+@app.post("/api/jobs/cleanup-irrelevant")
+def cleanup_irrelevant():
+    count = db.cleanup_irrelevant_jobs()
     return {"deleted": count}
 
 @app.post("/api/jobs/clear-queue")

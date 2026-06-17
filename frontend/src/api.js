@@ -54,6 +54,7 @@ export const api = {
   getEvaluations: (limit = 50) => request(`/evaluations?limit=${limit}`),
   getAnalytics: () => request('/analytics'),
   cleanupNonUs: () => request('/jobs/cleanup-non-us', { method: 'POST' }),
+  cleanupIrrelevant: () => request('/jobs/cleanup-irrelevant', { method: 'POST' }),
   getCollectedEmails: (params = {}) => {
     const q = new URLSearchParams(params).toString();
     return request(`/collected-emails${q ? '?' + q : ''}`);

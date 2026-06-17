@@ -1,9 +1,10 @@
 """SQLite database layer for JobHunter."""
 
+import re as _re
 import sqlite3
 import json
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from contextlib import contextmanager
 
 DB_PATH = Path("jobhunter.db")
@@ -303,15 +304,196 @@ def update_job(job_id, **fields):
         db.execute(f"UPDATE jobs SET {set_clause} WHERE id = ?", params)
 
 
+_TITLE_WHITELIST = _re.compile(r"""
+    software|backend|front.?end|full.?stack|developer|swe\b|web\s*dev|
+    devops|sre\b|site\s*reliability|platform\s*engineer|
+    infra(?:structure)?\s*engineer|cloud\s*engineer|
+    data\s*engineer|ml\s*engineer|machine\s*learning|ai\s*engineer|deep\s*learning|
+    security\s*engineer|cybersecurity|devsecops|appsec|
+    solutions?\s*engineer|forward\s*deployed|product\s*engineer|
+    mobile\s*engineer|mobile\s*dev|ios\s*engineer|android\s*engineer|
+    embedded\s*software|firmware\s*engineer|
+    data\s*scien|analytics\s*engineer|dataops|
+    distributed.*engineer|inference\s*engineer|training\s*engineer|
+    agent\s*engineer|api\s*engineer|core\s*engineer|
+    growth\s*engineer|founding\s*engineer|
+    detection.*engineer|observability|reliability\s*engineer|
+    research\s*engineer|applied\s*(?:ai|ml)|
+    ui\s*engineer|web\s*engineer|design\s*engineer|
+    qa\s*engineer|quality\s*assurance|test\s*automation|sdet|
+    network\s*engineer|protocol\s*engineer|
+    gtm\s*engineer|automation\s*engineer|it\s*engineer|
+    performance\s*engineer|production\s*engineer|
+    secops|release\s*engineer|build\s*reliability|
+    middleware|hpc\s*engineer
+""", _re.IGNORECASE | _re.VERBOSE)
+
+_TITLE_BLACKLIST = _re.compile(r"""
+    mechanical\s*engineer|electrical\s*engineer|civil\s*engineer|
+    chemical\s*engineer|structural\s*engineer|
+    hardware\s*engineer|pcb|analog|asic|vlsi|rtl|chip\s*design|signal\s*integrity|
+    physical\s*design|dft\s*engineer|serdes|
+    manufacturing\s*engineer|quality\s*engineer|process\s*engineer|
+    safety\s*(?:engineer|specialist)|field\s*engineer|
+    avionics|spacecraft|propulsion|thermal\s*engineer|rf\s*(?:engineer|design)|
+    power\s*(?:engineer|electronics)|gnc\s*engineer|
+    drill|metallurg|geotechnical|hydromet|pyromet|mining|mineral|
+    technician|
+    sales\s*engineer|customer\s*(?:success|support)|account\s*(?:engineer|executive)|
+    implementation\s*engineer|
+    recruiter|human\s*resource|talent\s*(?:partner|acquisition)|people\s*(?:ops|data)|
+    accounting|finance\s*(?:analyst|partner)|compensation\s*partner|
+    marketing|content\s*(?:writer|strategist)|copywriter|
+    ux\s*design|ui\s*design|graphic\s*design|
+    executive\s*assistant|administrative|receptionist|clerk|
+    nurse|doctor|physician|clinical|pharma|regulatory|
+    compliance\s*(?:officer|engineer)|legal|counsel|paralegal|attorney|
+    warehouse|logistics|supply\s*chain|procurement|buyer|
+    driver|delivery|maintenance|janitor|custodian|
+    cook|chef|food|beverage|hospitality|bartender|
+    environmental\s*engineer|sustainability|ehs\b|
+    fire\s*protection|nuclear\s*engineer|radiation|
+    casting|forging|welding|sheet\s*metal|smt\b|
+    tire|vehicle\s*config|cnc|composites|
+    pipe\s*(?:&|and)\s*tubing|harnessing|
+    antenna|laser\s*engineer|emc\s*engineer|
+    sensor\s*validation|navigation\s*engineer|
+    simulation\s*(?:realism|applications)|multiphysics|
+    project\s*(?:manager|engineer)|program\s*manager|scrum|
+    construction|supplier\s*(?:development|industrialization)|
+    deployment\s*engineer.*(?:southeast|network|site\s*survey)|
+    mission\s*(?:engineer|integration)|certification\s*engineer|
+    materials\s*engineer|mechatronics|
+    industrial\s*engineer|packaging\s*engineer|
+    human\s*factors|bioengineering|
+    general\s*application|talent\s*community|
+    vp[,.]?\s*engineer|chief\s*engineer|
+    part.?time|weekend\s*shift|
+    architect.*(?:fire|solutions?\s*-\s*infra)|
+    consultant.*(?:pra|nuclear)
+""", _re.IGNORECASE | _re.VERBOSE)
+
+
+def is_relevant_title(title: str) -> bool:
+    """Return True if the job title is relevant to software/data/AI engineering."""
+    if not title:
+        return False
+    if _TITLE_WHITELIST.search(title):
+        return True
+    if _TITLE_BLACKLIST.search(title):
+        return False
+    return True
+
+
+_COMPANY_BLACKLIST = {s.lower() for s in [
+    "Palantir", "Palantir Technologies",
+    "Booz Allen", "Booz Allen Hamilton",
+    "General Dynamics", "General Dynamics Mission Systems",
+    "AeroVironment",
+    "Slingshot Aerospace",
+    "SpaceX",
+    "Relativity Space",
+    "Stoke Space Technologies",
+    "Wisk",
+    "Scale AI",
+    "Raytheon", "RTX",
+    "Northrop Grumman",
+    "Lockheed Martin",
+    "BAE Systems",
+    "L3Harris", "L3Harris Technologies",
+    "Leidos",
+    "SAIC",
+    "Anduril", "Anduril Industries",
+    "Shield AI",
+]}
+
+
+def _is_blacklisted_company(company: str) -> bool:
+    return company.lower().strip() in _COMPANY_BLACKLIST
+
+
+_NON_US_PATTERN = _re.compile(r"""
+    \bStuttgart\b|\bMunich\b|\bBerlin\b|\bFrankfurt\b|\bLondon\b|\bToronto\b|
+    \bBangalore\b|\bBengaluru\b|\bHyderabad\b|\bPune\b|\bDelhi\b|
+    \bChennai\b|\bNoida\b|\bGurgaon\b|\bMumbai\b|\bMohali\b|
+    \bCanada\b|\bGermany\b|\bJapan\b|\bSingapore\b|\bIsrael\b|
+    \bIreland\b|\bParis\b|\bToulouse\b|\bAmsterdam\b|\bDubai\b|\bSydney\b|
+    \bMelbourne\b|\bZurich\b|\bGeneva\b|\bWarsaw\b|\bPrague\b|\bBudapest\b|
+    \bBucharest\b|\bRomania\b|\bPoland\b|\bSpain\b|\bItaly\b|
+    \bPortugal\b|\bSweden\b|\bNorway\b|\bDenmark\b|\bFinland\b|
+    \bAustria\b|\bBelgium\b|\bNetherlands\b|\bSwitzerland\b|
+    \bManila\b|\bVietnam\b|\bKorea\b|\bChina\b|\bShanghai\b|
+    \bBeijing\b|\bHong\s*Kong\b|\bTaiwan\b|\bThailand\b|
+    \bMexico\b|\bBrazil\b|\bColombia\b|\bArgentina\b|
+    \bEurope\b|\bEMEA\b|\bAPAC\b|\bPhilippines\b|
+    \bAustralia\b|\bNew\s*Zealand\b|\bSouth\s*Africa\b|
+    \bSlovakia\b|\bBratislava\b|\bIceland\b|\bReykjavik\b|
+    \bMalm[oö]\b|\bGlasgow\b|\bKnutsford\b|\bRadbroke\b|
+    \bBelgrade\b|\bSerbia\b|\bKyiv\b|\bUkraine\b|
+    \bEngland\b|\bEgypt\b|\bCosta\s*Rica\b|\bEscazu\b|
+    \bCroatia\b|\bBulgaria\b|\bLatvia\b|\bLithuania\b|\bEstonia\b|
+    \bCzech\b|\bGreece\b|\bTurkey\b|\bCyprus\b|\bMalta\b|
+    \bLuxembourg\b|\bVancouver\b|\bMontreal\b|\bOttawa\b|
+    \bTel\s*Aviv\b|\bSeoul\b|\bTokyo\b|\bSao\s*Paulo\b|
+    \bBogota\b|\bBarcelona\b|\bMadrid\b|\bMilan\b|\bRome\b|
+    \bCopenhagen\b|\bOslo\b|\bHelsinki\b|\bVienna\b|
+    \bDublin\b|\bLisbon\b|\bJakarta\b|\bBangkok\b|
+    ,\s*(?:UK|DE|FR|JP|SG|IL|IE|NL|CH|AU|IN|BR|MX|KR|HU|PL|RO|CRI)\s*$|
+    \(IND\)|\bIND\b|
+    \bGlobal\s*Remote\b
+""", _re.IGNORECASE | _re.VERBOSE)
+
+_US_OVERRIDE = _re.compile(r'Indianapolis|Indiana\b|Creve Coeur|Arlington|Tukwila', _re.IGNORECASE)
+
+def _is_us_location_db(location: str) -> bool:
+    if not location or not location.strip():
+        return True
+    if _NON_US_PATTERN.search(location) and not _US_OVERRIDE.search(location):
+        return False
+    return True
+
+
+def _is_fresh_posting(posted_at: str) -> bool:
+    if not posted_at:
+        return False
+    try:
+        dt = datetime.fromisoformat(posted_at.replace("Z", "+00:00"))
+        return dt >= datetime.now(timezone.utc) - timedelta(days=30)
+    except (ValueError, TypeError):
+        return False
+
+
 def upsert_jobs(entries: list):
     inserted = 0
+    filtered = 0
     with get_db() as db:
         for j in entries:
             title = j.get("title", "")
             company = j.get("company", "")
-            # Dedup: skip if same title+company already exists (even from a different source)
+            posted_at = j.get("posted_at", "")
+            location = j.get("location", "")
+            if not is_relevant_title(title):
+                filtered += 1
+                continue
+            if _is_blacklisted_company(company):
+                filtered += 1
+                continue
+            if not _is_fresh_posting(posted_at):
+                filtered += 1
+                continue
+            if not _is_us_location_db(location):
+                filtered += 1
+                continue
+            apply_link = j.get("apply_link", "")
+            # Dedup: skip if same apply_link already exists, or same title+company
+            if apply_link:
+                dup_link = db.execute(
+                    "SELECT 1 FROM jobs WHERE apply_link = ? LIMIT 1", (apply_link,)
+                ).fetchone()
+                if dup_link:
+                    continue
             existing = db.execute(
-                "SELECT id, status FROM jobs WHERE LOWER(title) = LOWER(?) AND LOWER(company) = LOWER(?) LIMIT 1",
+                "SELECT 1 FROM jobs WHERE LOWER(title) = LOWER(?) AND LOWER(company) = LOWER(?) LIMIT 1",
                 (title, company),
             ).fetchone()
             if existing:
@@ -322,13 +504,24 @@ def upsert_jobs(entries: list):
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
             """, (
                 j.get("id"), title, company,
-                j.get("location", ""), j.get("apply_link", ""), j.get("ats", ""),
+                j.get("location", ""), apply_link, j.get("ats", ""),
                 j.get("score", 0), j.get("description", ""),
                 j.get("posted_at", ""), j.get("discovered_at", ""),
                 j.get("source", ""), j.get("query", ""),
             ))
             inserted += cursor.rowcount
     return inserted
+
+
+def cleanup_irrelevant_jobs() -> int:
+    """Remove non-applied jobs with irrelevant titles. Returns count deleted."""
+    with get_db() as db:
+        rows = db.execute("SELECT id, title FROM jobs WHERE status != 'applied'").fetchall()
+        to_delete = [r["id"] for r in rows if not is_relevant_title(r["title"])]
+        if to_delete:
+            placeholders = ",".join("?" * len(to_delete))
+            db.execute(f"DELETE FROM jobs WHERE id IN ({placeholders})", to_delete)
+        return len(to_delete)
 
 
 def count_jobs(status=None, min_score=None, search=None):
@@ -786,8 +979,6 @@ def get_collected_emails(company: str = None, limit: int = 200, offset: int = 0)
 
 
 # --- H-1B sponsors ---
-
-import re as _re
 
 _CORP_SUFFIXES = _re.compile(
     r"\b(INCORPORATED|CORPORATION|COMPANY|HOLDINGS?|GROUP|INC|CORP|LLC|LLP|LTD|PLC|CO|LP|USA|US)\b\.?",
