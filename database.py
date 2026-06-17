@@ -1143,18 +1143,45 @@ def set_sponsor_ats(sponsor_id: int, ats_type: str, ats_slug: str):
         )
 
 
-def get_unresolved_sponsors(eng_only: bool = True, limit: int = 5000):
-    """Sponsors with H-1B history whose ATS board hasn't been probed yet."""
-    eng_clause = """AND (UPPER(top_titles) LIKE '%SOFTWARE%' OR UPPER(top_titles) LIKE '%ENGINEER%'
-        OR UPPER(top_titles) LIKE '%DEVELOPER%' OR UPPER(top_titles) LIKE '%DATA%')""" if eng_only else ""
+def get_unresolved_sponsors(scope: str = "eng_h1b", limit: int = 50000):
+    """Companies whose ATS board hasn't been probed yet, by scope:
+      eng_h1b  — H-1B sponsors with engineering titles (default, smallest)
+      h1b      — all H-1B sponsors
+      web      — every company with a website (max coverage incl. funded startups)
+      all      — every company (website or not)
+    Only rows with a usable slug source (name/website) are returned; ordered by the
+    strongest signal first (funding then approvals) so early hits are high-value.
+    """
+    eng = """(UPPER(top_titles) LIKE '%SOFTWARE%' OR UPPER(top_titles) LIKE '%ENGINEER%'
+        OR UPPER(top_titles) LIKE '%DEVELOPER%' OR UPPER(top_titles) LIKE '%DATA%')"""
+    has_web = "website IS NOT NULL AND website != ''"
+    if scope == "h1b":
+        where = "has_h1b = 1"
+    elif scope == "web":
+        where = has_web
+    elif scope == "all":
+        where = "1=1"
+    else:  # eng_h1b
+        where = f"has_h1b = 1 AND {eng}"
     with get_db() as db:
         rows = db.execute(
             f"""SELECT id, name, website FROM h1b_sponsors
-                WHERE has_h1b = 1 AND ats_checked IS NULL {eng_clause}
-                ORDER BY total_approvals DESC LIMIT ?""",
+                WHERE ats_checked IS NULL AND {where}
+                ORDER BY COALESCE(total_funding, 0) DESC, COALESCE(total_approvals, 0) DESC
+                LIMIT ?""",
             (limit,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def reset_empty_sponsor_checks() -> int:
+    """Clear the 'checked' marker on sponsors that previously came up empty,
+    so an expanded probe can re-evaluate them. Leaves resolved boards untouched."""
+    with get_db() as db:
+        cur = db.execute(
+            "UPDATE h1b_sponsors SET ats_checked = NULL WHERE ats_type = 'none'"
+        )
+        return cur.rowcount
 
 
 def get_resolved_sponsors():

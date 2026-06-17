@@ -37,9 +37,9 @@ export default function Sponsors() {
     return () => clearTimeout(timer)
   }, [])
 
-  const handleResolveAll = async () => {
+  const handleResolveAll = async ({ force = false, scope = 'eng_h1b' } = {}) => {
     try {
-      await api.resolveSponsorAts()
+      await api.resolveSponsorAts({ force, scope })
       const st = await api.getSponsorResolveStatus()
       setResolveStatus({ ...st, running: true })
       const poll = async () => {
@@ -109,10 +109,24 @@ export default function Sponsors() {
             </span>
           )}
           {resolveStatus && !resolveStatus.running && resolveStatus.ats_checked < resolveStatus.with_h1b && (
-            <button onClick={handleResolveAll}
+            <button onClick={() => handleResolveAll({ scope: 'eng_h1b' })}
               className="text-xs px-2.5 py-1.5 rounded-lg bg-accent/15 text-accent border border-accent/30 hover:bg-accent/25 transition-all btn-press"
-              title="Probe Greenhouse/Lever/Ashby for all sponsors so their boards are scanned automatically during discovery">
+              title="Probe Greenhouse, Lever, Ashby, SmartRecruiters, Pinpoint & Oracle HCM for engineering H-1B sponsors so their boards are scanned automatically during discovery">
               Resolve ATS Boards
+            </button>
+          )}
+          {resolveStatus && !resolveStatus.running && (
+            <button onClick={() => handleResolveAll({ scope: 'web' })}
+              className="text-xs px-2.5 py-1.5 rounded-lg bg-accent/15 text-accent border border-accent/30 hover:bg-accent/25 transition-all btn-press"
+              title="Probe EVERY company in the dataset that has a website (~17k incl. funded startups & mid-tier) for a public ATS board. Resumable; runs in the background.">
+              Probe all startups
+            </button>
+          )}
+          {resolveStatus && !resolveStatus.running && resolveStatus.ats_resolved > 0 && (
+            <button onClick={() => handleResolveAll({ force: true, scope: 'web' })}
+              className="text-xs px-2.5 py-1.5 rounded-lg bg-surface-overlay text-text-secondary border border-border hover:border-border-hover transition-all btn-press"
+              title="Re-probe companies that came up empty against all 6 ATS platforms">
+              Re-probe empty
             </button>
           )}
           <span className="text-xs text-text-muted">{data.total} sponsors</span>

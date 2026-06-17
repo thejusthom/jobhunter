@@ -1277,10 +1277,17 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
             if sponsors:
                 discovery_status["phase"] = f"Fetching {len(sponsors)} sponsor boards..."
                 import ats_discovery
-                from ats_discovery import fetch_greenhouse, fetch_lever, fetch_ashby
+                from ats_discovery import (
+                    fetch_greenhouse, fetch_lever, fetch_ashby,
+                    fetch_smartrecruiters, fetch_pinpoint, fetch_oracle_hcm,
+                )
                 from concurrent.futures import ThreadPoolExecutor, as_completed
                 ats_discovery.FRESHNESS_DAYS = max(1, freshness_hours / 24)
-                sponsor_fetchers = {"greenhouse": fetch_greenhouse, "lever": fetch_lever, "ashby": fetch_ashby}
+                sponsor_fetchers = {
+                    "greenhouse": fetch_greenhouse, "lever": fetch_lever, "ashby": fetch_ashby,
+                    "smartrecruiters": fetch_smartrecruiters, "pinpoint": fetch_pinpoint,
+                    "oracle_hcm": fetch_oracle_hcm,
+                }
 
                 def _fetch_sponsor_board(s):
                     display = db.normalize_sponsor_name(s["name"]).title()
@@ -2307,18 +2314,30 @@ ENG_TITLE_KEYWORDS = (
 )
 
 
-def _probe_sponsor_ats(name: str, website: str) -> tuple[str | None, str | None, list]:
-    """Try Greenhouse/Lever/Ashby with slug guesses. Returns (ats_type, slug, raw_jobs).
-    Freshness is controlled by the caller via ats_discovery.FRESHNESS_DAYS (not thread-safe to set here)."""
+def _probe_sponsor_ats(name: str, website: str, try_oracle: bool = True) -> tuple[str | None, str | None, list]:
+    """Probe every blindly-guessable ATS platform with slug guesses.
+    Returns (ats_type, slug, raw_jobs) for the first hit.
+    Freshness is controlled by the caller via ats_discovery.FRESHNESS_DAYS (not thread-safe to set here).
+
+    Covers Greenhouse, Lever, Ashby, SmartRecruiters, Pinpoint (slug-only) and Oracle HCM
+    (slug + default site). Workday/LinkedIn need a tenant site-path / numeric company ID that
+    can't be guessed from a name, so they're resolved separately.
+
+    try_oracle=False skips the Oracle HCM probe (4 URL tries × 15s timeout each) — disable it
+    for large bulk scopes where the per-miss cost would dominate."""
     import ats_discovery as ats
 
     display_name = db.normalize_sponsor_name(name).title()
     candidates = _sponsor_slug_candidates(name, website or "")
+
+    # Cheap slug-only APIs (1-few requests each, fail fast on 404) — try across every slug guess
     for slug in candidates:
         for fetcher, label in [
             (ats.fetch_greenhouse, "greenhouse"),
             (ats.fetch_lever, "lever"),
             (ats.fetch_ashby, "ashby"),
+            (ats.fetch_smartrecruiters, "smartrecruiters"),
+            (ats.fetch_pinpoint, "pinpoint"),
         ]:
             try:
                 jobs = fetcher(slug, display_name)
@@ -2326,6 +2345,16 @@ def _probe_sponsor_ats(name: str, website: str) -> tuple[str | None, str | None,
                 jobs = []
             if jobs:
                 return label, slug, jobs
+
+    # Oracle HCM probes up to 4 base URLs internally (slow) — only try the best (first) guess
+    if try_oracle and candidates:
+        try:
+            jobs = ats.fetch_oracle_hcm(candidates[0], display_name)
+        except Exception:
+            jobs = []
+        if jobs:
+            return "oracle_hcm", candidates[0], jobs
+
     return None, None, []
 
 
@@ -2395,23 +2424,26 @@ def sponsor_scan_jobs(sponsor_id: int):
 sponsor_resolve_status = {"running": False, "checked": 0, "total": 0, "resolved": 0}
 
 
-def _run_sponsor_resolve():
+def _run_sponsor_resolve(scope: str = "eng_h1b"):
     from concurrent.futures import ThreadPoolExecutor, as_completed
     import ats_discovery as _ats
 
-    sponsors = db.get_unresolved_sponsors(eng_only=True)
+    sponsors = db.get_unresolved_sponsors(scope=scope)
     sponsor_resolve_status.update({"running": True, "checked": 0, "total": len(sponsors), "resolved": 0})
-    _log(f"[sponsor-resolve] Probing ATS boards for {len(sponsors)} sponsors...")
+    _log(f"[sponsor-resolve] Probing ATS boards for {len(sponsors)} companies (scope={scope})...")
+
+    # Oracle HCM probing is slow (4×15s timeouts/miss) — only worth it on the small scopes
+    try_oracle = scope in ("eng_h1b", "h1b")
 
     def _probe(s):
-        ats_name, slug, jobs = _probe_sponsor_ats(s["name"], s.get("website", ""))
+        ats_name, slug, jobs = _probe_sponsor_ats(s["name"], s.get("website", ""), try_oracle=try_oracle)
         return s["id"], s["name"], ats_name, slug
 
     # Resolution checks board EXISTENCE — a board with only old postings still counts
     old_freshness = _ats.FRESHNESS_DAYS
     _ats.FRESHNESS_DAYS = 365
     try:
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        with ThreadPoolExecutor(max_workers=24) as executor:
             futures = [executor.submit(_probe, s) for s in sponsors]
             for f in as_completed(futures):
                 sid, name, ats_name, slug = f.result()
@@ -2427,12 +2459,16 @@ def _run_sponsor_resolve():
 
 
 @app.post("/api/sponsors/resolve-ats")
-def sponsor_resolve_ats(background_tasks: BackgroundTasks):
-    """Probe all unchecked eng sponsors for public ATS boards (background, one-time)."""
+def sponsor_resolve_ats(background_tasks: BackgroundTasks, force: bool = False, scope: str = "eng_h1b"):
+    """Probe unchecked companies for public ATS boards (background, resumable).
+    scope: eng_h1b (default) | h1b | web (all companies w/ website) | all.
+    force=true re-queues companies that previously came up empty (e.g. after adding ATS platforms)."""
     if sponsor_resolve_status["running"]:
         return {"started": False, "status": sponsor_resolve_status}
-    background_tasks.add_task(_run_sponsor_resolve)
-    return {"started": True}
+    requeued = db.reset_empty_sponsor_checks() if force else 0
+    pending = len(db.get_unresolved_sponsors(scope=scope))
+    background_tasks.add_task(_run_sponsor_resolve, scope)
+    return {"started": True, "requeued": requeued, "queued": pending, "scope": scope}
 
 
 @app.get("/api/sponsors/resolve-status")

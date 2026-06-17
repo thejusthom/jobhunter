@@ -82,7 +82,12 @@ export const api = {
   getSponsorExecutives: (company) => request(`/sponsors/executives?company=${encodeURIComponent(company)}`),
   linkedinRecruiterSearch: (company) => request(`/linkedin-recruiter-search?company=${encodeURIComponent(company)}`),
   scanSponsorJobs: (id) => request(`/sponsors/${id}/scan-jobs`, { method: 'POST' }),
-  resolveSponsorAts: () => request('/sponsors/resolve-ats', { method: 'POST' }),
+  resolveSponsorAts: ({ force = false, scope = 'eng_h1b' } = {}) => {
+    const q = new URLSearchParams()
+    if (force) q.set('force', 'true')
+    if (scope) q.set('scope', scope)
+    return request(`/sponsors/resolve-ats?${q.toString()}`, { method: 'POST' })
+  },
   getSponsorResolveStatus: () => request('/sponsors/resolve-status'),
 
   // Auto-Apply Engine
