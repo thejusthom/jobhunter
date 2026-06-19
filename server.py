@@ -90,6 +90,14 @@ async def lifespan(app: FastAPI):
     t = threading.Thread(target=_scheduler_loop, daemon=True)
     t.start()
     yield
+    # Shutdown: force Litestream sync by checkpointing WAL into the main DB file
+    _log("[shutdown] Checkpointing WAL for final Litestream sync...")
+    try:
+        with db.get_db() as conn:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        _log("[shutdown] WAL checkpoint complete — Litestream will sync on exit")
+    except Exception as e:
+        _log(f"[shutdown] WAL checkpoint failed: {e}")
 
 app = FastAPI(title="JobHunter", lifespan=lifespan)
 app.add_middleware(
