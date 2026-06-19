@@ -2219,6 +2219,23 @@ def cleanup_non_us():
     count = db.delete_non_us_jobs()
     return {"deleted": count}
 
+@app.post("/api/sync-db")
+def sync_db():
+    """Trigger an immediate Litestream replication to B2."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["./litestream.exe", "replicate", "-config", "litestream.yml", "-exec", "exit 0"],
+            capture_output=True, text=True, timeout=60,
+        )
+        _log(f"[sync-db] Manual sync triggered (exit={result.returncode})")
+        return {"ok": True, "message": "DB synced to B2"}
+    except FileNotFoundError:
+        raise HTTPException(500, "litestream.exe not found")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(500, "Sync timed out")
+
+
 @app.post("/api/jobs/cleanup-irrelevant")
 def cleanup_irrelevant():
     count = db.cleanup_irrelevant_jobs()

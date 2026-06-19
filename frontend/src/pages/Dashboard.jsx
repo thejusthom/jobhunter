@@ -15,6 +15,19 @@ export default function Dashboard() {
   const [discovering, setDiscovering] = useState(false)
   const [discoveryPhase, setDiscoveryPhase] = useState('')
   const [freshness, setFreshness] = useState(24)
+  const [syncing, setSyncing] = useState(false)
+
+  const syncDb = async () => {
+    setSyncing(true)
+    try {
+      await api.syncDb()
+      alert('DB synced to Backblaze B2')
+    } catch (e) {
+      alert('Sync failed: ' + e.message)
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   const load = () => {
     api.getDashboard().then(setData).finally(() => setLoading(false))
@@ -132,7 +145,17 @@ export default function Dashboard() {
         </div>
 
         <div className="bg-surface-raised border border-border rounded-xl p-5">
-          <h3 className="text-text-primary font-semibold mb-4">Discovery</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-text-primary font-semibold">Discovery</h3>
+            <button
+              onClick={syncDb}
+              disabled={syncing}
+              className="text-xs px-2.5 py-1.5 rounded-lg bg-surface-overlay text-text-secondary border border-border hover:border-border-hover disabled:opacity-50 transition-all btn-press"
+              title="Push DB to Backblaze B2 now"
+            >
+              {syncing ? 'Syncing...' : '↑ Sync DB'}
+            </button>
+          </div>
           <div className="text-sm text-text-tertiary mb-4">
             {discovering && discoveryPhase
               ? <span className="text-accent animate-pulse">{discoveryPhase}</span>
