@@ -7,7 +7,6 @@ __pycache__/
 *.db-shm
 queue.json
 application_log.json
-resumes/
 .claude/
 server.log
 *.log
@@ -19,3 +18,4 @@ litestream.exe
 frontend/src/App.css
 frontend/src/assets/
 frontend/README.md
+jobhunter.db.local-backup
