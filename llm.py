@@ -8,12 +8,18 @@ import os
 import re
 import json
 import time
+from datetime import datetime
 import requests as http_requests
 
 _provider = None
 _client = None
 _model_name = None
 _initialized = False
+
+
+def _log(msg: str):
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"[{ts}] [LLM] {msg}", flush=True)
 
 
 def _init():
@@ -27,43 +33,43 @@ def _init():
     if provider == "gemini":
         api_key = os.getenv("GEMINI_API_KEY", "")
         if not api_key:
-            print("[LLM] WARNING: No GEMINI_API_KEY in .env")
+            _log("WARNING: No GEMINI_API_KEY in .env — LLM calls will be skipped")
             return
         _provider = "gemini"
         _client = api_key
         _model_name = os.getenv("LLM_MODEL", "gemini-2.5-flash")
-        print(f"[LLM] Using Gemini REST ({_model_name})")
+        _log(f"Using Gemini REST ({_model_name}), key ...{api_key[-4:]}")
 
     elif provider == "anthropic":
         api_key = os.getenv("ANTHROPIC_API_KEY", "")
         if not api_key:
-            print("[LLM] WARNING: No ANTHROPIC_API_KEY in .env")
+            _log("WARNING: No ANTHROPIC_API_KEY in .env — LLM calls will be skipped")
             return
         try:
             import anthropic
             _client = anthropic.Anthropic(api_key=api_key)
             _provider = "anthropic"
             _model_name = os.getenv("LLM_MODEL", "claude-sonnet-4-20250514")
-            print(f"[LLM] Using Anthropic ({_model_name})")
+            _log(f"Using Anthropic ({_model_name})")
         except ImportError:
-            print("[LLM] anthropic not installed. Run: pip install anthropic")
+            _log("anthropic not installed. Run: pip install anthropic")
 
     elif provider == "openai":
         api_key = os.getenv("OPENAI_API_KEY", "")
         if not api_key:
-            print("[LLM] WARNING: No OPENAI_API_KEY in .env")
+            _log("WARNING: No OPENAI_API_KEY in .env — LLM calls will be skipped")
             return
         try:
             import openai
             _client = openai.OpenAI(api_key=api_key)
             _provider = "openai"
             _model_name = os.getenv("LLM_MODEL", "gpt-4o-mini")
-            print(f"[LLM] Using OpenAI ({_model_name})")
+            _log(f"Using OpenAI ({_model_name})")
         except ImportError:
-            print("[LLM] openai not installed. Run: pip install openai")
+            _log("openai not installed. Run: pip install openai")
 
     else:
-        print(f"[LLM] Unknown provider: '{provider}'. Use: gemini, anthropic, openai")
+        _log(f"Unknown provider: '{provider}'. Use: gemini, anthropic, openai")
 
 
 def is_available() -> bool:
@@ -74,11 +80,17 @@ def is_available() -> bool:
 def call(system_prompt: str, user_prompt: str, max_tokens: int = 1024, retries: int = 2) -> str:
     _init()
     if _client is None:
+        _log("call() aborted: no client initialized (missing API key or provider?)")
         return ""
 
+    prompt_chars = len(system_prompt) + len(user_prompt)
+
     for attempt in range(retries + 1):
+        attempt_label = f"attempt {attempt + 1}/{retries + 1}"
+        t0 = time.monotonic()
         try:
             if _provider == "gemini":
+                _log(f"-> Gemini {_model_name} request ({prompt_chars} chars, {attempt_label})")
                 resp = http_requests.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/{_model_name}:generateContent?key={_client}",
                     json={
@@ -91,21 +103,59 @@ def call(system_prompt: str, user_prompt: str, max_tokens: int = 1024, retries: 
                     },
                     timeout=45,
                 )
-                resp.raise_for_status()
-                parts = resp.json()["candidates"][0]["content"]["parts"]
+                elapsed = time.monotonic() - t0
+
+                # Non-2xx: surface Gemini's error body (key/quota/safety reasons live here)
+                if not resp.ok:
+                    body = resp.text[:500]
+                    _log(f"<- Gemini HTTP {resp.status_code} in {elapsed:.1f}s ({attempt_label}): {body}")
+                    raise http_requests.HTTPError(f"HTTP {resp.status_code}")
+
+                data = resp.json()
+
+                # 200 but no usable candidate (safety block, MAX_TOKENS, prompt feedback, etc.)
+                candidates = data.get("candidates") or []
+                if not candidates:
+                    feedback = data.get("promptFeedback", {})
+                    _log(f"<- Gemini 200 but NO candidates in {elapsed:.1f}s ({attempt_label}). "
+                         f"promptFeedback={feedback}")
+                    raise ValueError("no candidates in response")
+
+                cand = candidates[0]
+                finish = cand.get("finishReason", "?")
+                parts = cand.get("content", {}).get("parts") or []
                 text_parts = [p["text"] for p in parts if not p.get("thought") and p.get("text")]
-                return "\n".join(text_parts)
+                text = "\n".join(text_parts)
+
+                usage = data.get("usageMetadata", {})
+                tok = (f"in={usage.get('promptTokenCount', '?')} "
+                       f"out={usage.get('candidatesTokenCount', '?')}")
+                if not text:
+                    _log(f"<- Gemini 200 but EMPTY text in {elapsed:.1f}s ({attempt_label}). "
+                         f"finishReason={finish} {tok}")
+                    raise ValueError(f"empty text (finishReason={finish})")
+
+                _log(f"<- Gemini OK in {elapsed:.1f}s: finishReason={finish} {tok} "
+                     f"text={len(text)} chars")
+                return text
 
             elif _provider == "anthropic":
+                _log(f"-> Anthropic {_model_name} request ({prompt_chars} chars, {attempt_label})")
                 response = _client.messages.create(
                     model=_model_name,
                     max_tokens=max_tokens,
                     system=system_prompt,
                     messages=[{"role": "user", "content": user_prompt}],
                 )
-                return response.content[0].text
+                text = response.content[0].text
+                elapsed = time.monotonic() - t0
+                u = getattr(response, "usage", None)
+                tok = f"in={u.input_tokens} out={u.output_tokens}" if u else ""
+                _log(f"<- Anthropic OK in {elapsed:.1f}s: {tok} text={len(text)} chars")
+                return text
 
             elif _provider == "openai":
+                _log(f"-> OpenAI {_model_name} request ({prompt_chars} chars, {attempt_label})")
                 response = _client.chat.completions.create(
                     model=_model_name,
                     max_tokens=max_tokens,
@@ -115,13 +165,23 @@ def call(system_prompt: str, user_prompt: str, max_tokens: int = 1024, retries: 
                         {"role": "user", "content": user_prompt},
                     ],
                 )
-                return response.choices[0].message.content
+                text = response.choices[0].message.content
+                elapsed = time.monotonic() - t0
+                u = getattr(response, "usage", None)
+                tok = f"in={u.prompt_tokens} out={u.completion_tokens}" if u else ""
+                _log(f"<- OpenAI OK in {elapsed:.1f}s: {tok} text={len(text or '')} chars")
+                return text
 
         except Exception as e:
-            print(f"[LLM] {_provider} call failed (attempt {attempt + 1}/{retries + 1}): {e}")
+            elapsed = time.monotonic() - t0
+            _log(f"{_provider} call FAILED in {elapsed:.1f}s ({attempt_label}): "
+                 f"{type(e).__name__}: {e}")
             if attempt < retries:
-                time.sleep(2 ** attempt)
+                backoff = 2 ** attempt
+                _log(f"retrying in {backoff}s...")
+                time.sleep(backoff)
             else:
+                _log(f"giving up after {retries + 1} attempts; returning empty string")
                 return ""
     return ""
 
