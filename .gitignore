@@ -10,7 +10,6 @@ application_log.json
 .claude/
 server.log
 *.log
-linkedin_overrides.json
 litestream.exe
 *.db-litestream/
 
