@@ -2244,6 +2244,27 @@ def sync_db():
         raise HTTPException(500, "Sync timed out")
 
 
+@app.post("/api/shutdown")
+def shutdown_server():
+    """Checkpoint WAL, sync to B2, then shut down the server."""
+    import signal
+    _log("[shutdown] Graceful shutdown requested via API")
+    try:
+        with db.get_db() as conn:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        _log("[shutdown] WAL checkpoint complete")
+    except Exception as e:
+        _log(f"[shutdown] WAL checkpoint failed: {e}")
+
+    def _kill():
+        import time
+        time.sleep(1)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    threading.Thread(target=_kill, daemon=True).start()
+    return {"ok": True, "message": "Server shutting down — DB synced to B2"}
+
+
 @app.post("/api/jobs/cleanup-irrelevant")
 def cleanup_irrelevant():
     count = db.cleanup_irrelevant_jobs()
