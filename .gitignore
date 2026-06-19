@@ -12,6 +12,7 @@ resumes/
 server.log
 *.log
 linkedin_overrides.json
+litestream.exe
 
 # Vite boilerplate
 frontend/src/App.css
