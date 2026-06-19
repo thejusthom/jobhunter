@@ -3,9 +3,8 @@
   "tasks": [
     {
       "label": "Backend",
-      "type": "process",
-      "command": "${workspaceFolder}/venv/Scripts/python.exe",
-      "args": ["server.py"],
+      "type": "shell",
+      "command": ".\\launch_backend.bat",
       "options": {
         "cwd": "${workspaceFolder}"
       },
