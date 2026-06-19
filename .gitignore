@@ -13,6 +13,7 @@ server.log
 *.log
 linkedin_overrides.json
 litestream.exe
+*.db-litestream/
 
 # Vite boilerplate
 frontend/src/App.css
