@@ -1,0 +1,58 @@
+Thejus Thomson
+Boston, MA | 857-445-6819 | thomsonthejus@gmail.com | thejusthomson.netlify.app | linkedin.com/in/thejusthomson
+
+EDUCATION
+Northeastern University | Boston, MA | MS in Software Engineering          Jan 2024 -- Dec 2025
+Anna University | Chennai, India | Bachelor of Engineering                 Jun 2016 -- Sept 2020
+
+WORK EXPERIENCE
+
+Humanitarians AI | Software Engineer | Python, Llama 3.1, QLoRA, SQLite, Claude API          Feb 2026 -- Current
+- Engineered Python pipeline processing 22GB Wikipedia XML dumps, extracting 5,600+ biomedical articles for NLP
+- Fine-tuned Llama 3.1 8B with QLoRA on A100 GPU cluster, achieving 87.6% token accuracy for biomedical NLP
+- Eliminated 20K JSON files by migrating to indexed SQLite glossary, reducing lookup complexity to O(log n)
+
+IBM | Chennai, India
+Application Developer | Java, Spring Boot, Apache Camel, PostgreSQL, Oracle, Python          Dec 2021 -- Aug 2023
+- Architected parallel processing pipeline using Apache Camel to decouple microservice dependencies, enabling concurrent multi-threaded execution and cutting end-to-end latency by 80% in distributed systems
+- Overhauled 50+ legacy SOAP services to RESTful APIs, boosting transaction throughput by 50% with zero downtime
+- Accelerated PostgreSQL and Oracle query execution with composite indexing and OOP data-access layers, improving database read performance by 20% across multi-tiered service calls
+- Streamlined document and log archival with lifecycle policies and cron automation, cutting storage by 30%
+- Hardened CI pipeline with SonarQube SAST scanning, shrinking critical vulnerabilities from 20 to 5
+- Shipped React + TypeScript billing components supporting 1,000+ enterprise accounts with API-driven filtering
+
+Associate Systems Engineer | Spring Boot, Hibernate, Docker, DocuSign API                    Jan 2021 -- Dec 2021
+- Implemented RESTful APIs with OOP design patterns and Hibernate ORM, achieving sub-1-second response times for high-volume contract processing across distributed microservices
+- Launched AngularJS billing portal with role-based approvals and discounts, cutting contract time from 3 days to 2 hours
+- Automated contract workflows via DocuSign APIs, processing 2K+ documents daily and cutting manual effort by 60%
+- Containerized Spring Boot services in Docker with GitHub Actions CI/CD, reducing release cycles by 20%
+
+Fashion Index | Full Stack Developer Co-op | Next.js, MongoDB, TypeScript, AWS          Jan 2025 -- April 2025
+- Optimized API routes with code splitting and lazy loading, reducing content delivery latency by 40%
+- Scaled SEO coverage with structured data schemas and XML sitemaps, increasing organic traffic by 25%
+- Constructed product filtering with MongoDB aggregation pipelines, improving search performance by 3x
+
+SKILLS AND CERTIFICATIONS
+Languages & Databases: Java, Python, SQL, PostgreSQL, Oracle, MongoDB, SQLite, TypeScript
+Frameworks & Tools: Spring Boot, Hibernate, Apache Camel, Node.js, LangChain, Claude API, OpenAI API
+Cloud & Infrastructure: AWS, GCP, Docker, Kubernetes, Terraform, GitHub Actions, Linux, CI/CD
+Practices: Distributed Systems, Data Pipelines, OOP Design, RESTful APIs, Agile/Scrum
+Certifications: SAFe 5 Practitioner, Microsoft Azure AZ-900, IBM Cloud Core, Applying AI Technologies
+
+PROJECTS
+
+CloudNotifyOps | GCP, Terraform, GitHub Actions, Java, Spring Boot, CloudSQL, Pub/Sub
+- Designed fault-tolerant notification system on GCP using Cloud Functions and Pub/Sub for distributed event processing
+- Provisioned infrastructure with Terraform IaC and GitHub Actions CI/CD, implementing VPC and autoscaling
+
+MSL Practice Gym | React, Node.js, Express.js, PostgreSQL, JWT, Tailwind CSS, Recharts, Supabase
+- Shipped AI simulation platform in 48 hours with 20+ LLM-powered scenarios, winning 1st place at DNATE Hackathon
+- Implemented multi-tiered Node.js/PostgreSQL backend with JWT auth, role-based access, and Recharts analytics
+
+locALL | Node.js, Express.js, MongoDB, Stripe, Mapbox, JWT
+- Developed RESTful APIs with Node.js and Express.js for payments, events feed, and food sharing platform
+- Integrated MongoDB aggregation queries and data models for location-based community features
+
+MAJOR ACHIEVEMENTS
+- DNATE Hackathon (Oct 2025) Winner among 20+ teams for building MSL practice platform
+- IBM Consulting VP's Client & Partner Success Award -- Nov 2023

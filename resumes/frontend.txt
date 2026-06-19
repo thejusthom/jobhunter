@@ -1,0 +1,58 @@
+Thejus Thomson
+Boston, MA | 857-445-6819 | thomsonthejus@gmail.com | thejusthomson.netlify.app | linkedin.com/in/thejusthomson
+
+EDUCATION
+Northeastern University | Boston, MA | MS in Software Engineering          Jan 2024 -- Dec 2025
+Anna University | Chennai, India | Bachelor of Engineering                 Jun 2016 -- Sept 2020
+
+WORK EXPERIENCE
+
+Humanitarians AI | Software Engineer | Next.js, TypeScript, React, SQLite, Tailwind CSS 4    Feb 2026 -- Current
+- Built remark MDX plugin auto-detecting 500+ biomedical terms at build time using reverse index for 100K+ keywords
+- Developed keyword popup system in Next.js 16 with zero bundle overhead and on-demand API client-side caching
+- Engineered server-rendered glossary pages with SEO metadata, static generation, and SQLite content via Tailwind
+
+Fashion Index | Full Stack Developer Co-op | Next.js, TypeScript, MongoDB, Express.js, AWS    Jan 2025 -- April 2025
+- Optimized API routes with code splitting and lazy loading, reducing content delivery latency by 40%
+- Implemented WCAG 2.1 AA compliance with semantic HTML and ARIA attributes, ensuring accessible user flows
+- Constructed product filtering with TypeScript and MongoDB aggregations, improving search performance by 3x
+- Scaled SEO coverage with structured data schemas and XML sitemaps, increasing organic traffic by 25%
+
+IBM | Chennai, India
+Application Developer | React, TypeScript, Java, Spring Boot, Apache Camel, OAuth 2.0         Dec 2021 -- Aug 2023
+- Shipped React + TypeScript billing dashboards for enterprise accounts with invoice summaries, usage tables, and API-driven filtering supporting 1,000+ accounts with pagination
+- Architected data sync pipeline using Apache Camel to orchestrate microservice data movement, enabling concurrent processing and reducing end-to-end latency by 80%
+- Overhauled cookie-based auth to OAuth 2.0/OpenID Connect SSO, securing identity workflows across 50+ services
+- Hardened CI pipeline with SonarQube SAST scanning, shrinking critical vulnerabilities from 20 to 5
+- Migrated 50+ SOAP services to RESTful APIs, boosting throughput by 50% with zero downtime
+
+Associate Systems Engineer | React.js, Redux, AngularJS, Docker, DocuSign API                 Jan 2021 -- Dec 2021
+- Built scalable state management in React.js using Redux, optimizing data flow and re-renders for role-based access
+- Launched AngularJS billing portal with role-based approvals and discounts, cutting contract time from 3 days to 2 hours
+- Automated contract workflows via DocuSign APIs, processing 2K+ documents daily and cutting manual effort by 60%
+- Containerized Spring Boot services in Docker with GitHub Actions CI/CD, reducing release cycles by 20%
+
+SKILLS AND CERTIFICATIONS
+Languages: TypeScript, JavaScript, Python, Java, SQL, HTML5, CSS3
+Frameworks & Libraries: React.js, Next.js, Redux, Tailwind CSS, Node.js, LangChain, OpenAI API, MDX
+Tools & Cloud: Git, SQLite, Webpack, GitHub Actions, AWS, Figma, Chrome DevTools, CI/CD
+Practices: Server-Side Rendering, SEO, Accessibility (WCAG 2.1), RESTful APIs, Agile/Scrum
+Certifications: SAFe 5 Practitioner, Microsoft Azure AZ-900, IBM Cloud Core, Applying AI Technologies
+
+PROJECTS
+
+MSL Practice Gym | React, Express.js, PostgreSQL, JWT, Tailwind CSS, Recharts, Supabase
+- Shipped full-stack AI simulation platform in 48 hours with 20+ scenarios, winning 1st place at DNATE Hackathon
+- Designed 20+ scenario flows with JWT-secured sessions, role-based access, and Recharts analytics dashboard
+
+Chatfolio | React.js, Material-UI, Redux Toolkit, Node.js, OpenAI API, LangChain, RAG
+- Built interactive portfolio with React.js, Redux Toolkit, and Material-UI showcasing projects and experience
+- Integrated LangChain RAG pipeline enabling OpenAI-powered real-time personalized document queries
+
+locALL | React, Node.js, Express.js, MongoDB, Mapbox, Stripe, JWT
+- Engineered location-based platform with React, Stripe payment integration, and REST APIs for data sync
+- Established cross-browser compatibility through Jest testing and Babel transpilation
+
+MAJOR ACHIEVEMENTS
+- DNATE Hackathon (Oct 2025) Winner among 20+ teams for building MSL practice platform
+- IBM Consulting VP's Client & Partner Success Award -- Nov 2023

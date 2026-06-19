@@ -1,0 +1,58 @@
+Thejus Thomson
+Boston, MA | 857-445-6819 | thomsonthejus@gmail.com | thejusthomson.netlify.app | linkedin.com/in/thejusthomson
+
+EDUCATION
+Northeastern University | Boston, MA | MS in Software Engineering          Jan 2024 -- Dec 2025
+Anna University | Chennai, India | Bachelor of Engineering                 Jun 2016 -- Sept 2020
+
+WORK EXPERIENCE
+
+Humanitarians AI | AI Software Engineer | Python, Llama 3.1, QLoRA, Claude API, SQLite        Feb 2026 -- Current
+- Fine-tuned Llama 3.1 8B with QLoRA on A100 GPU cluster, achieving 87.6% token accuracy for biomedical NLP
+- Engineered Python pipeline processing 22GB Wikipedia XML dumps, extracting 5,600+ biomedical articles for NLP
+- Built Claude API-powered REST endpoints for Medhavi edtech platform with FERPA-compliant data handling
+- Eliminated 20K JSON files by migrating to indexed SQLite glossary, reducing lookup complexity to O(log n)
+
+Fashion Index | Full Stack Developer Co-op | Next.js, MongoDB, TypeScript, AWS                Jan 2025 -- April 2025
+- Optimized API routes with code splitting and lazy loading, reducing content delivery latency by 40%
+- Scaled SEO coverage with structured data schemas and XML sitemaps, increasing organic traffic by 25%
+- Constructed product filtering with MongoDB aggregation pipelines, improving search performance by 3x
+
+IBM | Chennai, India
+Application Developer | Java, Spring Boot, Apache Camel, PostgreSQL, React, TypeScript         Dec 2021 -- Aug 2023
+- Architected parallel processing pipeline using Apache Camel to decouple microservice dependencies, enabling concurrent multi-threaded execution and cutting end-to-end latency by 80% in distributed systems
+- Overhauled 50+ legacy SOAP services to RESTful APIs, boosting transaction throughput by 50% with zero downtime
+- Shipped React + TypeScript billing dashboards supporting 1,000+ enterprise accounts with pagination and API filtering
+- Accelerated PostgreSQL and Oracle query execution with composite indexing, improving read performance by 20%
+- Hardened CI pipeline with SonarQube SAST scanning, shrinking critical vulnerabilities from 20 to 5
+
+Associate Systems Engineer | Spring Boot, Hibernate, Docker, DocuSign API                     Jan 2021 -- Dec 2021
+- Implemented RESTful APIs with OOP design patterns and Hibernate ORM, achieving sub-1-second response times for high-volume contract processing across distributed microservices
+- Automated contract workflows via DocuSign APIs, processing 2K+ documents daily and cutting manual effort by 60%
+- Launched AngularJS billing portal with role-based approvals and discounts, cutting contract time from 3 days to 2 hours
+- Containerized Spring Boot services in Docker with GitHub Actions CI/CD, reducing release cycles by 20%
+
+SKILLS AND CERTIFICATIONS
+AI & ML: Claude API, OpenAI API, LangChain, RAG, QLoRA, LLM Fine-tuning, Prompt Engineering
+Languages & Databases: Python, Java, TypeScript, JavaScript, SQL, PostgreSQL, MongoDB, SQLite
+Frameworks & Cloud: Spring Boot, React.js, Node.js, Next.js, AWS, GCP, Docker, Kubernetes, Terraform
+Practices: Agentic AI, Data Pipelines, Distributed Systems, RESTful APIs, CI/CD, Agile/Scrum
+Certifications: SAFe 5 Practitioner, Microsoft Azure AZ-900, IBM Cloud Core, Applying AI Technologies
+
+PROJECTS
+
+ApplyPilot | Python, Playwright, Claude API, Gemini API, OpenAI API, JavaScript, Chart.js
+- Architected multi-agent LLM system across Claude, Gemini, and OpenAI with job scoring and blacklist enforcement
+- Engineered Playwright browser automation with Chart.js analytics dashboard, chunked rendering and lazy loading
+
+MSL Practice Gym | React, Node.js, Express.js, PostgreSQL, JWT, Tailwind CSS, Recharts, Supabase
+- Shipped AI simulation platform in 48 hours with 20+ LLM-powered scenarios, winning 1st place at DNATE Hackathon
+- Implemented multi-tiered Node.js/PostgreSQL backend with JWT auth, role-based access, and Recharts analytics
+
+Chatfolio | React.js, Redux Toolkit, Node.js, OpenAI API, LangChain, RAG
+- Built LangChain RAG pipeline over personal knowledge base enabling OpenAI-powered real-time document queries
+- Integrated multi-turn conversation memory with Redux Toolkit for personalized visitor interactions
+
+MAJOR ACHIEVEMENTS
+- DNATE Hackathon (Oct 2025) Winner among 20+ teams for building MSL practice platform
+- IBM Consulting VP's Client & Partner Success Award -- Nov 2023

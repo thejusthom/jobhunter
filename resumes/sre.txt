@@ -1,0 +1,60 @@
+Thejus Thomson
+Boston, MA | 857-445-6819 | thomsonthejus@gmail.com | thejusthomson.netlify.app | linkedin.com/in/thejusthomson
+
+EDUCATION
+Northeastern University | Boston, MA | MS in Software Engineering          Jan 2024 -- Dec 2025
+Anna University | Chennai, India | Bachelor of Engineering                 Jun 2016 -- Sept 2020
+
+WORK EXPERIENCE
+
+Humanitarians AI | Software Engineer | Python, Llama 3.1, QLoRA, SLURM, Next.js              Feb 2026 -- Current
+- Fine-tuned Llama 3.1 8B with QLoRA on A100 HPC cluster, achieving 87.6% token accuracy with 4-bit quantization
+- Orchestrated SLURM GPU compute jobs on Northeastern HPC including scheduling, monitoring, and failure recovery
+- Integrated JWT and Clerk auth middleware across distributed Next.js services with route-level API exclusion patterns
+
+Fashion Index | Full Stack Developer Co-op | Next.js, MongoDB, AWS EC2, S3                   Jan 2025 -- April 2025
+- Deployed and maintained applications on AWS (EC2, S3), ensuring high availability for production workloads
+- Optimized API routes with code splitting and lazy loading, reducing content delivery latency by 40%
+- Constructed product filtering with MongoDB aggregation pipelines, improving query performance by 3x
+
+IBM | Chennai, India
+Application Developer | Java, Apache Camel, Python, Bash, Jenkins, SonarQube, Veracode        Dec 2021 -- Aug 2023
+- Maintained 99.9%+ SLA by proactively monitoring production systems and resolving incidents across quarterly reviews
+- Architected parallel processing pipeline using Apache Camel for microservice orchestration, cutting latency by 80%
+- Managed 50+ Spring Boot deployments to Tomcat 9 on RHEL/Linux via Jenkins CI/CD with zero downtime
+- Hardened CI pipeline with SonarQube and Veracode SAST/DAST, reducing critical vulnerabilities from 20 to 5
+- Streamlined document and log archival using Python and Bash with cron jobs, reducing storage overhead by 30%
+- Overhauled 50+ legacy SOAP services to REST APIs with Java and Spring Boot, boosting throughput by 50%
+
+Associate Systems Engineer | Spring Boot, Hibernate, Docker, DocuSign API                     Jan 2021 -- Dec 2021
+- Implemented RESTful APIs with OOP design patterns and Hibernate ORM, achieving sub-1-second response times for high-volume contract processing across distributed microservices
+- Automated contract workflows via DocuSign APIs, processing 2K+ documents daily and cutting manual effort by 60%
+- Containerized Spring Boot services in Docker with GitHub Actions CI/CD, reducing release cycles by 20%
+
+SKILLS AND CERTIFICATIONS
+Cloud & Infra: AWS (EC2, S3, RDS), GCP, Docker, Kubernetes, Tomcat, Nginx, SLURM, CUDA
+CI/CD & Automation: Jenkins, GitHub Actions, Terraform, Packer, Shell/Bash, Cron
+Security & Observability: SonarQube, Veracode, SAST/DAST, GCP Cloud Monitoring, CloudWatch, Splunk
+Languages: Python, Java, Bash, SQL, TypeScript
+Practices: Incident Management, SLA Management, IaC, GPU Compute, LLM Fine-tuning, Agile/Scrum
+Certifications: SAFe 5 Practitioner, Microsoft Azure AZ-900, IBM Cloud Core, Applying AI Technologies
+
+PROJECTS
+
+CloudNotifyOps | GCP, Terraform, GitHub Actions, Java, Spring Boot, CloudSQL, Pub/Sub
+- Designed fault-tolerant notification system on GCP using Cloud Functions, Pub/Sub, and CloudSQL event processing
+- Provisioned infrastructure with Terraform IaC and GitHub Actions CI/CD, implementing VPC and autoscaling
+- Instrumented GCP Cloud Monitoring for observability, alerting, and automated incident response
+
+MSL Practice Gym | React, Express.js, PostgreSQL, JWT, Tailwind CSS, Recharts, Railway, Supabase
+- Orchestrated end-to-end deployment: Railway for backend, Vercel for frontend, Supabase for PostgreSQL hosting
+- Configured GitHub Actions CI/CD for automated builds, tests, and deployments across environments
+- Shipped AI simulation platform with 20+ scenarios, 5+ personas, winning 1st place at DNATE Hackathon
+
+locALL | React, Node.js, Express.js, MongoDB, Mapbox, Stripe, JWT
+- Developed RESTful APIs with Node.js and Express.js for location-based community platform
+- Implemented Jest testing suite for API reliability and cross-browser compatibility
+
+MAJOR ACHIEVEMENTS
+- DNATE Hackathon (Oct 2025) Winner among 20+ teams for building MSL practice platform
+- IBM Consulting VP's Client & Partner Success Award -- Nov 2023
