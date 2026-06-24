@@ -3,3 +3,4 @@ python-dotenv
 fastapi
 uvicorn[standard]
 pydantic
+# boto3   # optional: only needed for `backup_db.py` s3 target (Cloudflare R2 / Backblaze B2)

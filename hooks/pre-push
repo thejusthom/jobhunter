@@ -1,0 +1,15 @@
+#!/bin/sh
+# JobHunter DB backup on push (best-effort — never blocks the push).
+# Install:  cp hooks/pre-push .git/hooks/pre-push   (then: chmod +x .git/hooks/pre-push)
+# Configure targets via BACKUP_TARGETS in .env (local | git | s3, comma-separated).
+
+root="$(git rev-parse --show-toplevel)" || exit 0
+cd "$root" || exit 0
+
+PY="venv/Scripts/python.exe"        # Windows venv
+[ -x "$PY" ] || PY="venv/bin/python"  # *nix venv
+[ -x "$PY" ] || PY="python"
+
+echo "[pre-push] backing up DB (targets: ${BACKUP_TARGETS:-local})..."
+"$PY" backup_db.py || echo "[pre-push] backup failed — continuing push anyway"
+exit 0

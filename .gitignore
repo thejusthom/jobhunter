@@ -12,6 +12,7 @@ server.log
 *.log
 litestream.exe
 *.db-litestream/
+backups/
 
 # Vite boilerplate
 frontend/src/App.css
