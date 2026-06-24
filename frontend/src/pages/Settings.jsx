@@ -51,8 +51,13 @@ export default function Settings() {
     setBackupMsg(null)
     try {
       const res = await api.pushBackup()
-      setBackupMsg({ ok: true, text: 'Backup pushed to private repo.' })
-      if (res.last_commit) setBackup(prev => ({ ...(prev || {}), last_commit: res.last_commit, unpushed: 0 }))
+      const text = res.status === 'pushed'
+        ? 'New backup pushed to GitHub.'
+        : res.status === 'committed_unpushed'
+          ? `Committed locally, but ${res.unpushed} commit(s) not pushed — check the remote/network.`
+          : 'Already up to date — no new data since the last backup.'
+      setBackupMsg({ ok: res.status !== 'committed_unpushed', text })
+      if (res.last_commit) setBackup(prev => ({ ...(prev || {}), last_commit: res.last_commit, unpushed: res.unpushed ?? 0 }))
       loadBackup()
     } catch (e) {
       setBackupMsg({ ok: false, text: e.message || 'Backup failed' })

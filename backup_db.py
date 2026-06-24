@@ -107,22 +107,33 @@ def target_git(snapshot: Path, stamp: str) -> None:
     dest = repo_dir / filename
     shutil.copy2(snapshot, dest)
 
-    git("add", filename)
-    # Nothing changed? then skip the commit/push quietly.
-    status = subprocess.run(["git", "status", "--porcelain"], cwd=repo_dir,
-                            capture_output=True, text=True).stdout.strip()
-    if not status:
-        _log("git -> no changes since last backup, skipping")
-        return
-    git("commit", "-m", f"DB backup {stamp}")
-    if os.getenv("BACKUP_GIT_PUSH", "true").lower() != "false":
+    push_enabled = os.getenv("BACKUP_GIT_PUSH", "true").lower() != "false"
+
+    def push() -> None:
+        # No-op if already in sync ("Everything up-to-date"); sets upstream on first push.
         try:
             git("push")
         except subprocess.CalledProcessError:
-            # First push / no upstream yet — set it. Requires the remote repo to exist.
             branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
                                     cwd=repo_dir, capture_output=True, text=True).stdout.strip() or "main"
             git("push", "-u", "origin", branch)
+
+    git("add", filename)
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=repo_dir,
+                            capture_output=True, text=True).stdout.strip()
+    if not status:
+        # Snapshot identical to last commit — nothing new to record. Still make sure the
+        # remote has whatever we committed before (recovers from an earlier failed push).
+        if push_enabled:
+            push()
+            _log(f"git -> no new data; remote in sync ({repo_dir})")
+        else:
+            _log(f"git -> no new data (push disabled) in {repo_dir}")
+        return
+
+    git("commit", "-m", f"DB backup {stamp}")
+    if push_enabled:
+        push()
         _log(f"git -> committed & pushed to {repo_dir}")
     else:
         _log(f"git -> committed (push disabled) in {repo_dir}")

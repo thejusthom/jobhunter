@@ -1276,6 +1276,7 @@ def backup_push():
     repo = _backup_repo_dir()
     if not repo or not (repo / ".git").exists():
         raise HTTPException(400, "BACKUP_GIT_DIR is not set to a valid git repo. See docs/BACKUP.md.")
+    before = _git_out(repo, "rev-parse", "HEAD")
     try:
         proc = _subprocess.run(
             [sys.executable, "backup_db.py", "--targets", "git"],
@@ -1285,10 +1286,21 @@ def backup_push():
     except _subprocess.TimeoutExpired:
         raise HTTPException(504, "Backup timed out (push took too long).")
     output = (proc.stdout or "") + (proc.stderr or "")
-    last_commit = _git_out(repo, "log", "-1", "--format=%h %cI %s")
     if proc.returncode != 0:
         raise HTTPException(500, f"Backup failed:\n{output.strip()[-800:]}")
-    return {"ok": True, "output": output.strip(), "last_commit": last_commit or None}
+    after = _git_out(repo, "rev-parse", "HEAD")
+    unpushed = _git_out(repo, "log", "--oneline", "@{u}..HEAD")
+    unpushed_n = len([l for l in unpushed.splitlines() if l.strip()]) if unpushed else 0
+    status = "pushed" if after != before else "no_change"
+    if unpushed_n > 0:
+        status = "committed_unpushed"
+    return {
+        "ok": True,
+        "status": status,
+        "unpushed": unpushed_n,
+        "last_commit": _git_out(repo, "log", "-1", "--format=%h %cI %s") or None,
+        "output": output.strip(),
+    }
 
 
 # ---------------------------------------------------------------------------
