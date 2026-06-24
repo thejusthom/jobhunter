@@ -131,6 +131,56 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(due_date);
         CREATE INDEX IF NOT EXISTS idx_reminders_completed ON reminders(completed);
         CREATE INDEX IF NOT EXISTS idx_collected_emails_company ON collected_emails(company);
+
+        CREATE TABLE IF NOT EXISTS interviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            application_id INTEGER DEFAULT NULL,
+            job_id TEXT DEFAULT NULL,
+            company TEXT NOT NULL,
+            role TEXT DEFAULT '',
+            location TEXT DEFAULT '',
+            source TEXT DEFAULT 'external',
+            status TEXT DEFAULT 'active',
+            contact_name TEXT DEFAULT '',
+            contact_role TEXT DEFAULT '',
+            contact_email TEXT DEFAULT '',
+            contact_linkedin TEXT DEFAULT '',
+            apply_link TEXT DEFAULT '',
+            salary_min INTEGER DEFAULT NULL,
+            salary_max INTEGER DEFAULT NULL,
+            sponsorship_status TEXT DEFAULT 'not_discussed',
+            sponsorship_notes TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (application_id) REFERENCES applications(id),
+            FOREIGN KEY (job_id) REFERENCES jobs(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS interview_rounds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            interview_id INTEGER NOT NULL,
+            seq INTEGER DEFAULT 0,
+            name TEXT DEFAULT '',
+            type TEXT DEFAULT 'video',
+            scheduled_at TEXT DEFAULT NULL,
+            duration_min INTEGER DEFAULT NULL,
+            status TEXT DEFAULT 'pending',
+            interviewer TEXT DEFAULT '',
+            interviewer_role TEXT DEFAULT '',
+            interviewer_linkedin TEXT DEFAULT '',
+            meeting_link TEXT DEFAULT '',
+            outcome TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            reminder_id INTEGER DEFAULT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (interview_id) REFERENCES interviews(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_interviews_status ON interviews(status);
+        CREATE INDEX IF NOT EXISTS idx_rounds_interview ON interview_rounds(interview_id);
+        CREATE INDEX IF NOT EXISTS idx_rounds_scheduled ON interview_rounds(scheduled_at);
         """)
 
         # Add outreach columns if missing
@@ -639,6 +689,16 @@ def get_applications(status=None, search=None, limit=100, offset=0):
         return [dict(r) for r in rows]
 
 
+def get_application(app_id):
+    with get_db() as db:
+        row = db.execute("""
+            SELECT a.*, j.contact_linkedin as job_contact_linkedin
+            FROM applications a LEFT JOIN jobs j ON a.job_id = j.id
+            WHERE a.id = ?
+        """, (app_id,)).fetchone()
+        return dict(row) if row else None
+
+
 def create_application(**fields):
     now = datetime.now(timezone.utc).isoformat()
     with get_db() as db:
@@ -768,6 +828,189 @@ def delete_reminder(reminder_id):
         db.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
 
 
+# --- Interview tracker queries ---
+
+INTERVIEW_FIELDS = (
+    "application_id", "job_id", "company", "role", "location", "source", "status",
+    "contact_name", "contact_role", "contact_email", "contact_linkedin", "apply_link",
+    "salary_min", "salary_max", "sponsorship_status", "sponsorship_notes", "notes",
+)
+ROUND_FIELDS = (
+    "interview_id", "seq", "name", "type", "scheduled_at", "duration_min", "status",
+    "interviewer", "interviewer_role", "interviewer_linkedin", "meeting_link",
+    "outcome", "notes", "reminder_id",
+)
+
+# Round statuses that no longer count as "upcoming"
+_ROUND_DONE = "('completed','cancelled','passed','failed')"
+
+
+def _annotate_h1b(interview: dict) -> dict:
+    """Attach known-H-1B-sponsor context for the interview's company."""
+    sponsor = lookup_sponsor(interview.get("company") or "")
+    interview["h1b_known"] = bool(sponsor)
+    interview["h1b_approvals"] = int(sponsor["total_approvals"]) if sponsor and sponsor.get("total_approvals") else None
+    return interview
+
+
+def get_interviews(status=None, search=None):
+    clauses, params = [], []
+    if status:
+        clauses.append("i.status = ?")
+        params.append(status)
+    if search:
+        clauses.append("(i.company LIKE ? OR i.role LIKE ?)")
+        like = f"%{search}%"
+        params.extend([like] * 2)
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    with get_db() as db:
+        rows = db.execute(f"""
+            SELECT i.*,
+                (SELECT COUNT(*) FROM interview_rounds r WHERE r.interview_id = i.id) AS rounds_total,
+                (SELECT COUNT(*) FROM interview_rounds r WHERE r.interview_id = i.id AND r.status IN {_ROUND_DONE}) AS rounds_done,
+                (SELECT MIN(r.scheduled_at) FROM interview_rounds r
+                   WHERE r.interview_id = i.id AND r.scheduled_at IS NOT NULL
+                   AND r.scheduled_at >= datetime('now', 'localtime')
+                   AND r.status NOT IN {_ROUND_DONE}) AS next_round_at,
+                (SELECT r.name FROM interview_rounds r
+                   WHERE r.interview_id = i.id AND r.scheduled_at IS NOT NULL
+                   AND r.scheduled_at >= datetime('now', 'localtime')
+                   AND r.status NOT IN {_ROUND_DONE}
+                   ORDER BY r.scheduled_at ASC LIMIT 1) AS next_round_name
+            FROM interviews i
+            {where}
+            ORDER BY (next_round_at IS NULL), next_round_at ASC, i.updated_at DESC
+        """, params).fetchall()
+        return [_annotate_h1b(dict(r)) for r in rows]
+
+
+def get_interview(interview_id):
+    with get_db() as db:
+        row = db.execute("SELECT * FROM interviews WHERE id = ?", (interview_id,)).fetchone()
+        if not row:
+            return None
+        interview = _annotate_h1b(dict(row))
+        rounds = db.execute(
+            "SELECT * FROM interview_rounds WHERE interview_id = ? ORDER BY seq ASC, scheduled_at ASC, id ASC",
+            (interview_id,),
+        ).fetchall()
+        interview["rounds"] = [dict(r) for r in rounds]
+        return interview
+
+
+def create_interview(**fields):
+    now = datetime.now(timezone.utc).isoformat()
+    cols = [c for c in INTERVIEW_FIELDS if c in fields]
+    placeholders = ", ".join(["?"] * (len(cols) + 2))
+    col_sql = ", ".join(cols + ["created_at", "updated_at"])
+    values = [fields[c] for c in cols] + [now, now]
+    with get_db() as db:
+        cursor = db.execute(
+            f"INSERT INTO interviews ({col_sql}) VALUES ({placeholders})", values
+        )
+        return cursor.lastrowid
+
+
+def update_interview(interview_id, **fields):
+    allowed = set(INTERVIEW_FIELDS)
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    params = list(updates.values()) + [interview_id]
+    with get_db() as db:
+        db.execute(f"UPDATE interviews SET {set_clause} WHERE id = ?", params)
+
+
+def delete_interview(interview_id):
+    with get_db() as db:
+        # Remove reminders linked to this interview's rounds, then rounds, then interview.
+        reminder_ids = [r[0] for r in db.execute(
+            "SELECT reminder_id FROM interview_rounds WHERE interview_id = ? AND reminder_id IS NOT NULL",
+            (interview_id,),
+        ).fetchall()]
+        for rid in reminder_ids:
+            db.execute("DELETE FROM reminders WHERE id = ?", (rid,))
+        db.execute("DELETE FROM interview_rounds WHERE interview_id = ?", (interview_id,))
+        db.execute("DELETE FROM interviews WHERE id = ?", (interview_id,))
+
+
+def _touch_interview(db, interview_id):
+    db.execute(
+        "UPDATE interviews SET updated_at = ? WHERE id = ?",
+        (datetime.now(timezone.utc).isoformat(), interview_id),
+    )
+
+
+def add_round(**fields):
+    now = datetime.now(timezone.utc).isoformat()
+    cols = [c for c in ROUND_FIELDS if c in fields]
+    placeholders = ", ".join(["?"] * (len(cols) + 2))
+    col_sql = ", ".join(cols + ["created_at", "updated_at"])
+    values = [fields[c] for c in cols] + [now, now]
+    with get_db() as db:
+        cursor = db.execute(
+            f"INSERT INTO interview_rounds ({col_sql}) VALUES ({placeholders})", values
+        )
+        if fields.get("interview_id"):
+            _touch_interview(db, fields["interview_id"])
+        return cursor.lastrowid
+
+
+def get_round(round_id):
+    with get_db() as db:
+        row = db.execute("SELECT * FROM interview_rounds WHERE id = ?", (round_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def update_round(round_id, **fields):
+    allowed = set(ROUND_FIELDS) - {"interview_id"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    params = list(updates.values()) + [round_id]
+    with get_db() as db:
+        db.execute(f"UPDATE interview_rounds SET {set_clause} WHERE id = ?", params)
+        row = db.execute("SELECT interview_id FROM interview_rounds WHERE id = ?", (round_id,)).fetchone()
+        if row:
+            _touch_interview(db, row[0])
+
+
+def delete_round(round_id):
+    with get_db() as db:
+        db.execute("DELETE FROM interview_rounds WHERE id = ?", (round_id,))
+
+
+def get_interview_stats():
+    with get_db() as db:
+        by_status = {r["status"]: r["count"] for r in db.execute(
+            "SELECT status, COUNT(*) as count FROM interviews GROUP BY status"
+        ).fetchall()}
+        by_sponsorship = {r["sponsorship_status"]: r["count"] for r in db.execute(
+            "SELECT sponsorship_status, COUNT(*) as count FROM interviews GROUP BY sponsorship_status"
+        ).fetchall()}
+        upcoming = db.execute(f"""
+            SELECT COUNT(*) as count FROM interview_rounds
+            WHERE scheduled_at IS NOT NULL
+              AND scheduled_at >= datetime('now', 'localtime')
+              AND scheduled_at <= datetime('now', 'localtime', '+7 days')
+              AND status NOT IN {_ROUND_DONE}
+        """).fetchone()["count"]
+        total = db.execute("SELECT COUNT(*) as count FROM interviews").fetchone()["count"]
+    return {
+        "total": total,
+        "active": by_status.get("active", 0),
+        "offers": by_status.get("offer", 0) + by_status.get("accepted", 0),
+        "rejected": by_status.get("rejected", 0),
+        "upcoming_rounds_7d": upcoming,
+        "by_status": by_status,
+        "by_sponsorship": by_sponsorship,
+    }
+
+
 def delete_non_us_jobs():
     from ats_discovery import _is_us_location
     with get_db() as conn:
@@ -840,6 +1083,45 @@ def get_analytics():
             "SELECT company, COUNT(*) as count FROM recruiters WHERE company != '' GROUP BY company ORDER BY count DESC LIMIT 15"
         ).fetchall()
 
+        # --- Interview tracker aggregates ---
+        interviews_by_status = db.execute(
+            "SELECT status, COUNT(*) as count FROM interviews GROUP BY status ORDER BY count DESC"
+        ).fetchall()
+        interviews_by_company = db.execute(
+            "SELECT company, COUNT(*) as count FROM interviews GROUP BY company ORDER BY count DESC LIMIT 15"
+        ).fetchall()
+        interviews_by_sponsorship = db.execute(
+            "SELECT sponsorship_status, COUNT(*) as count FROM interviews GROUP BY sponsorship_status ORDER BY count DESC"
+        ).fetchall()
+        interviews_per_day = db.execute(
+            "SELECT DATE(created_at) as day, COUNT(*) as count FROM interviews GROUP BY DATE(created_at) ORDER BY day"
+        ).fetchall()
+        rounds_by_type = db.execute(
+            "SELECT type, COUNT(*) as count FROM interview_rounds GROUP BY type ORDER BY count DESC"
+        ).fetchall()
+        rounds_by_status = db.execute(
+            "SELECT status, COUNT(*) as count FROM interview_rounds GROUP BY status ORDER BY count DESC"
+        ).fetchall()
+
+        total_interviews = db.execute("SELECT COUNT(*) as count FROM interviews").fetchone()["count"]
+        interviews_active = db.execute("SELECT COUNT(*) as count FROM interviews WHERE status = 'active'").fetchone()["count"]
+        offers = db.execute("SELECT COUNT(*) as count FROM interviews WHERE status IN ('offer','accepted')").fetchone()["count"]
+        accepted = db.execute("SELECT COUNT(*) as count FROM interviews WHERE status = 'accepted'").fetchone()["count"]
+        rounds_upcoming_7d = db.execute(
+            "SELECT COUNT(*) as count FROM interview_rounds "
+            "WHERE scheduled_at IS NOT NULL AND scheduled_at >= datetime('now','localtime') "
+            "AND scheduled_at <= datetime('now','localtime','+7 days') "
+            "AND status NOT IN ('completed','cancelled','passed','failed')"
+        ).fetchone()["count"]
+        # Funnel: interviews that reached each stage
+        had_round = db.execute(
+            "SELECT COUNT(DISTINCT interview_id) as count FROM interview_rounds"
+        ).fetchone()["count"]
+        completed_round = db.execute(
+            "SELECT COUNT(DISTINCT interview_id) as count FROM interview_rounds "
+            "WHERE status IN ('completed','passed')"
+        ).fetchone()["count"]
+
     return {
         "totals": {
             "applications": total_apps,
@@ -850,6 +1132,10 @@ def get_analytics():
             "blocked_companies": blocked,
             "apps_this_week": apps_this_week,
             "apps_this_month": apps_this_month,
+            "interviews_total": total_interviews,
+            "interviews_active": interviews_active,
+            "offers": offers,
+            "rounds_upcoming_7d": rounds_upcoming_7d,
         },
         "apps_by_company": [dict(r) for r in apps_by_company],
         "apps_by_day": [dict(r) for r in apps_by_day],
@@ -860,6 +1146,19 @@ def get_analytics():
         "jobs_by_company": [dict(r) for r in jobs_by_company],
         "match_pct_distribution": [dict(r) for r in match_pct_dist],
         "recruiters_by_company": [dict(r) for r in recruiters_by_company],
+        "interviews_by_status": [dict(r) for r in interviews_by_status],
+        "interviews_by_company": [dict(r) for r in interviews_by_company],
+        "interviews_by_sponsorship": [dict(r) for r in interviews_by_sponsorship],
+        "interviews_per_day": [dict(r) for r in interviews_per_day],
+        "rounds_by_type": [dict(r) for r in rounds_by_type],
+        "rounds_by_status": [dict(r) for r in rounds_by_status],
+        "interview_funnel": [
+            {"stage": "Tracked", "count": total_interviews},
+            {"stage": "Had a round", "count": had_round},
+            {"stage": "Completed a round", "count": completed_round},
+            {"stage": "Offer", "count": offers},
+            {"stage": "Accepted", "count": accepted},
+        ],
     }
 
 

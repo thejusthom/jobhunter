@@ -27,7 +27,11 @@ export default function Analytics() {
 
   if (loading) return <p className="text-text-muted animate-pulse">Loading analytics...</p>
 
-  const { totals, apps_by_company, apps_by_day, apps_by_status, apps_by_source, apps_by_resume, jobs_by_ats, jobs_by_company, match_pct_distribution, recruiters_by_company } = data
+  const { totals, apps_by_company, apps_by_day, apps_by_status, apps_by_source, apps_by_resume, jobs_by_ats, jobs_by_company, match_pct_distribution, recruiters_by_company,
+    interviews_by_status, interviews_by_company, interviews_by_sponsorship, rounds_by_type, rounds_by_status, interview_funnel } = data
+
+  const sponsorshipLabel = (s) => ({ not_discussed: 'Not discussed', will_sponsor: 'Will sponsor', no_sponsorship: 'No sponsorship', unclear: 'Unclear' }[s] || s)
+  const sponsorshipData = (interviews_by_sponsorship || []).map(d => ({ ...d, sponsorship_status: sponsorshipLabel(d.sponsorship_status) }))
 
   return (
     <div className="space-y-6">
@@ -56,6 +60,25 @@ export default function Analytics() {
         <BarSection title="Match % Distribution" data={match_pct_distribution} keyField="bracket" valueField="count" />
         <BarSection title="Top Companies (Discovered)" data={jobs_by_company} keyField="company" valueField="count" />
         <BarSection title="Recruiters by Company" data={recruiters_by_company} keyField="company" valueField="count" />
+      </div>
+
+      {/* --- Interviews --- */}
+      <div>
+        <h2 className="text-lg font-semibold text-text-primary mb-3 mt-2">Interviews</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+          <StatCard label="Interviews Tracked" value={totals.interviews_total ?? 0} />
+          <StatCard label="Active" value={totals.interviews_active ?? 0} />
+          <StatCard label="Offers" value={totals.offers ?? 0} />
+          <StatCard label="Rounds (next 7d)" value={totals.rounds_upcoming_7d ?? 0} />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <BarSection title="Interview Funnel" data={interview_funnel} keyField="stage" valueField="count" />
+          <BarSection title="Sponsorship Status" data={sponsorshipData} keyField="sponsorship_status" valueField="count" />
+          <BarSection title="Interviews by Status" data={interviews_by_status} keyField="status" valueField="count" />
+          <BarSection title="Interviews by Company" data={interviews_by_company} keyField="company" valueField="count" />
+          <BarSection title="Rounds by Type" data={rounds_by_type} keyField="type" valueField="count" />
+          <BarSection title="Rounds by Status" data={rounds_by_status} keyField="status" valueField="count" />
+        </div>
       </div>
 
       {apps_by_day.length > 0 && (

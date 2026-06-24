@@ -4,6 +4,7 @@ import { api } from './api'
 import Dashboard from './pages/Dashboard'
 import JobQueue from './pages/JobQueue'
 import Applications from './pages/Applications'
+import Interviews from './pages/Interviews'
 import Evaluations from './pages/Evaluations'
 import Analytics from './pages/Analytics'
 import Recruiters from './pages/Recruiters'
@@ -17,6 +18,7 @@ const navItems = [
   { to: '/', label: 'Dashboard' },
   { to: '/jobs', label: 'Job Queue' },
   { to: '/applications', label: 'Applications' },
+  { to: '/interviews', label: 'Interviews' },
   { to: '/evaluations', label: 'AI Evals' },
   { to: '/analytics', label: 'Analytics' },
   { to: '/recruiters', label: 'Recruiters' },
@@ -275,6 +277,7 @@ export default function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/jobs" element={<JobQueue />} />
           <Route path="/applications" element={<Applications />} />
+          <Route path="/interviews" element={<Interviews />} />
           <Route path="/evaluations" element={<Evaluations />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/recruiters" element={<Recruiters />} />
