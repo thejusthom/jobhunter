@@ -1,7 +1,7 @@
 # Start the server with Litestream replication (Windows).
-# Usage: .\start.ps1
+# Usage: .\scripts\start.ps1
 
-Set-Location $PSScriptRoot
+Set-Location (Split-Path $PSScriptRoot -Parent)
 
 # Load .env
 Get-Content .env | ForEach-Object {

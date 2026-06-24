@@ -132,6 +132,6 @@ python restore_db.py
 ## Turning off continuous Litestream
 
 Once you're happy with on-demand snapshots you can stop running `litestream.exe replicate` (remove/skip
-it in `launch.bat` / `launch_backend.bat`). `litestream.yml` can stay for reference. This is what
+it in `scripts/launch.bat` / `scripts/launch_backend.bat`). `litestream.yml` can stay for reference. This is what
 actually stops the B2 transaction drain.
 ```

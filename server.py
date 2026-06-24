@@ -1275,7 +1275,7 @@ def backup_push():
     """Snapshot the DB and push it to the private git backup repo (synchronous)."""
     repo = _backup_repo_dir()
     if not repo or not (repo / ".git").exists():
-        raise HTTPException(400, "BACKUP_GIT_DIR is not set to a valid git repo. See BACKUP.md.")
+        raise HTTPException(400, "BACKUP_GIT_DIR is not set to a valid git repo. See docs/BACKUP.md.")
     try:
         proc = _subprocess.run(
             [sys.executable, "backup_db.py", "--targets", "git"],

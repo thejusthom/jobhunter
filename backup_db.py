@@ -16,7 +16,7 @@ Usage:
   python backup_db.py --targets s3         # override for this run (e.g. when B2 limits reset)
   python backup_db.py --targets local,git,s3
 
-Configure via .env (see BACKUP.md for the full list). Nothing here prints secrets.
+Configure via .env (see docs/BACKUP.md for the full list). Nothing here prints secrets.
 """
 
 from __future__ import annotations

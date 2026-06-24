@@ -3,7 +3,7 @@
 # Always pulls the latest DB from B2, keeps whichever copy has more data.
 
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 set -a; source .env; set +a
 
 count_jobs() {
