@@ -22,6 +22,45 @@ export default function Settings() {
   const [showSchedForm, setShowSchedForm] = useState(false)
   const [schedForm, setSchedForm] = useState({ name: '', hours: [9], sources: ['simplify'] })
 
+  const [backup, setBackup] = useState(null)
+  const [backupBusy, setBackupBusy] = useState(false)
+  const [backupMsg, setBackupMsg] = useState(null) // { ok, text }
+  const [syncing, setSyncing] = useState(false)
+
+  const syncDb = async () => {
+    setSyncing(true)
+    try {
+      await api.syncDb()
+      setBackupMsg({ ok: true, text: 'DB synced to Backblaze B2.' })
+    } catch (e) {
+      setBackupMsg({ ok: false, text: 'Sync failed: ' + e.message })
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const stopServer = async () => {
+    if (!confirm('Sync DB to B2 and shut down the server?')) return
+    try { await api.shutdownServer() } catch (_) {}
+  }
+
+  const loadBackup = () => api.getBackupStatus().then(setBackup).catch(() => setBackup(null))
+
+  const handleBackup = async () => {
+    setBackupBusy(true)
+    setBackupMsg(null)
+    try {
+      const res = await api.pushBackup()
+      setBackupMsg({ ok: true, text: 'Backup pushed to private repo.' })
+      if (res.last_commit) setBackup(prev => ({ ...(prev || {}), last_commit: res.last_commit, unpushed: 0 }))
+      loadBackup()
+    } catch (e) {
+      setBackupMsg({ ok: false, text: e.message || 'Backup failed' })
+    } finally {
+      setBackupBusy(false)
+    }
+  }
+
   const loadBlocked = () => {
     setLoading(true)
     api.getBlockedCompanies().then(setBlocked).finally(() => setLoading(false))
@@ -32,7 +71,7 @@ export default function Settings() {
     api.getScheduledDiscoveries().then(setSchedules).finally(() => setSchedLoading(false))
   }
 
-  useEffect(() => { loadBlocked(); loadSchedules() }, [])
+  useEffect(() => { loadBlocked(); loadSchedules(); loadBackup() }, [])
 
   const handleUnblock = async (company) => {
     await api.unblockCompany(company)
@@ -88,6 +127,74 @@ export default function Settings() {
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-semibold text-text-primary">Settings</h1>
+
+      {/* Database Backup */}
+      <div className="bg-surface-raised border border-border rounded-xl p-5">
+        <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+          <div>
+            <h2 className="text-text-primary font-semibold">Database Backup</h2>
+            <p className="text-text-tertiary text-xs mt-0.5">
+              Manually push the database to your private GitHub backup repo.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={syncDb}
+              disabled={syncing}
+              className="text-xs px-2.5 py-2 rounded-lg bg-surface-overlay text-text-secondary border border-border hover:border-border-hover disabled:opacity-50 transition-all btn-press whitespace-nowrap"
+              title="Push DB to Backblaze B2 now (legacy Litestream sync)"
+            >
+              {syncing ? 'Syncing…' : '↑ Sync to B2'}
+            </button>
+            <button
+              onClick={stopServer}
+              className="text-xs px-2.5 py-2 rounded-lg bg-red-900/15 text-danger border border-red-500/30 hover:bg-red-900/25 transition-all btn-press whitespace-nowrap"
+              title="Checkpoint WAL, sync to B2, then stop the server"
+            >
+              ⏻ Stop Server
+            </button>
+            <button
+              onClick={handleBackup}
+              disabled={backupBusy || (backup && !backup.configured)}
+              className="bg-accent hover:bg-accent-hover disabled:opacity-50 text-white font-medium text-sm px-4 py-2 rounded-lg transition-all duration-150 btn-press whitespace-nowrap"
+            >
+              {backupBusy ? 'Backing up…' : 'Back up now'}
+            </button>
+          </div>
+        </div>
+
+        {backup && !backup.configured && (
+          <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+            Backup repo not configured. Set <code>BACKUP_GIT_DIR</code> in <code>.env</code> (see BACKUP.md).
+          </p>
+        )}
+
+        {backup && backup.configured && (
+          <div className="text-xs text-text-tertiary space-y-1">
+            <div><span className="text-text-muted">Target:</span> {backup.targets} &middot; <span className="text-text-muted">Repo:</span> {backup.repo}</div>
+            <div>
+              <span className="text-text-muted">Last backup:</span>{' '}
+              {backup.last_commit
+                ? (() => {
+                    const [hash, iso, ...rest] = backup.last_commit.split(' ')
+                    const when = iso ? new Date(iso).toLocaleString() : ''
+                    return <span className="text-text-secondary">{when} ({hash})</span>
+                  })()
+                : <span className="text-text-muted">none yet</span>}
+            </div>
+            {backup.has_remote === false && (
+              <div className="text-amber-400">No git remote set — create the private repo and run <code>git -C {backup.repo} push -u origin main</code> once.</div>
+            )}
+            {backup.unpushed > 0 && backup.has_remote && (
+              <div className="text-amber-400">{backup.unpushed} local backup commit(s) not yet pushed.</div>
+            )}
+          </div>
+        )}
+
+        {backupMsg && (
+          <p className={`text-xs mt-2 ${backupMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>{backupMsg.text}</p>
+        )}
+      </div>
 
       {/* Scheduled Discoveries */}
       <div className="bg-surface-raised border border-border rounded-xl p-5">

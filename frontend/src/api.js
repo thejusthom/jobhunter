@@ -47,6 +47,25 @@ export const api = {
   updateReminder: (id, data) => request(`/reminders/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteReminder: (id) => request(`/reminders/${id}`, { method: 'DELETE' }),
 
+  // Interview tracker
+  getInterviews: (params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    return request(`/interviews${q ? '?' + q : ''}`);
+  },
+  getInterviewStats: () => request('/interviews/stats'),
+  getInterview: (id) => request(`/interviews/${id}`),
+  fetchInterviewUrl: (url) => request('/interviews/fetch-url', { method: 'POST', body: JSON.stringify({ url }) }),
+  createInterview: (data) => request('/interviews', { method: 'POST', body: JSON.stringify(data) }),
+  updateInterview: (id, data) => request(`/interviews/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteInterview: (id) => request(`/interviews/${id}`, { method: 'DELETE' }),
+  addRound: (interviewId, data) => request(`/interviews/${interviewId}/rounds`, { method: 'POST', body: JSON.stringify(data) }),
+  updateRound: (roundId, data) => request(`/interviews/rounds/${roundId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteRound: (roundId) => request(`/interviews/rounds/${roundId}`, { method: 'DELETE' }),
+
+  // DB backup (manual push to private git repo)
+  getBackupStatus: () => request('/backup/status'),
+  pushBackup: () => request('/backup/push', { method: 'POST' }),
+
   getDashboard: () => request('/dashboard'),
   triggerDiscovery: (data = {}) => request('/discover', { method: 'POST', body: JSON.stringify(data) }),
   getDiscoveryStatus: () => request('/discover/status'),

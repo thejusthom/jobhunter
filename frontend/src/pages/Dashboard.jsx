@@ -15,19 +15,6 @@ export default function Dashboard() {
   const [discovering, setDiscovering] = useState(false)
   const [discoveryPhase, setDiscoveryPhase] = useState('')
   const [freshness, setFreshness] = useState(24)
-  const [syncing, setSyncing] = useState(false)
-
-  const syncDb = async () => {
-    setSyncing(true)
-    try {
-      await api.syncDb()
-      alert('DB synced to Backblaze B2')
-    } catch (e) {
-      alert('Sync failed: ' + e.message)
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   const load = () => {
     api.getDashboard().then(setData).finally(() => setLoading(false))
@@ -147,28 +134,6 @@ export default function Dashboard() {
         <div className="bg-surface-raised border border-border rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-text-primary font-semibold">Discovery</h3>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={syncDb}
-                disabled={syncing}
-                className="text-xs px-2.5 py-1.5 rounded-lg bg-surface-overlay text-text-secondary border border-border hover:border-border-hover disabled:opacity-50 transition-all btn-press"
-                title="Push DB to Backblaze B2 now"
-              >
-                {syncing ? 'Syncing...' : '↑ Sync DB'}
-              </button>
-              <button
-                onClick={async () => {
-                  if (!confirm('Sync DB to B2 and shut down the server?')) return
-                  try {
-                    await api.shutdownServer()
-                  } catch (_) {}
-                }}
-                className="text-xs px-2.5 py-1.5 rounded-lg bg-red-900/15 text-danger border border-red-500/30 hover:bg-red-900/25 transition-all btn-press"
-                title="Checkpoint WAL, sync to B2, then stop the server"
-              >
-                ⏻ Stop Server
-              </button>
-            </div>
           </div>
           <div className="text-sm text-text-tertiary mb-4">
             {discovering && discoveryPhase

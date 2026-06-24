@@ -160,6 +160,70 @@ class ReminderCreate(BaseModel):
     title: str
     due_date: str
 
+class InterviewCreate(BaseModel):
+    job_id: str | None = None
+    application_id: int | None = None
+    company: str | None = None
+    role: str = ""
+    location: str = ""
+    status: str = "active"
+    contact_name: str = ""
+    contact_role: str = ""
+    contact_email: str = ""
+    contact_linkedin: str = ""
+    apply_link: str = ""
+    salary_min: int | None = None
+    salary_max: int | None = None
+    sponsorship_status: str = "not_discussed"
+    sponsorship_notes: str = ""
+    notes: str = ""
+
+class InterviewUpdate(BaseModel):
+    company: str | None = None
+    role: str | None = None
+    location: str | None = None
+    status: str | None = None
+    contact_name: str | None = None
+    contact_role: str | None = None
+    contact_email: str | None = None
+    contact_linkedin: str | None = None
+    apply_link: str | None = None
+    salary_min: int | None = None
+    salary_max: int | None = None
+    sponsorship_status: str | None = None
+    sponsorship_notes: str | None = None
+    notes: str | None = None
+
+class RoundCreate(BaseModel):
+    name: str = ""
+    type: str = "video"
+    seq: int | None = None
+    scheduled_at: str | None = None
+    duration_min: int | None = None
+    status: str = "pending"
+    interviewer: str = ""
+    interviewer_role: str = ""
+    interviewer_linkedin: str = ""
+    meeting_link: str = ""
+    outcome: str = ""
+    notes: str = ""
+    create_reminder: bool = False
+    reminder_title: str | None = None
+
+class RoundUpdate(BaseModel):
+    name: str | None = None
+    type: str | None = None
+    seq: int | None = None
+    scheduled_at: str | None = None
+    duration_min: int | None = None
+    status: str | None = None
+    interviewer: str | None = None
+    interviewer_role: str | None = None
+    interviewer_linkedin: str | None = None
+    meeting_link: str | None = None
+    outcome: str | None = None
+    notes: str | None = None
+
 class DiscoverRequest(BaseModel):
     queries: list[str] | None = None
     location: str = "United States"
@@ -995,6 +1059,236 @@ def update_reminder(reminder_id: int, body: ReminderUpdate):
 def delete_reminder(reminder_id: int):
     db.delete_reminder(reminder_id)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Interview tracker endpoints
+# ---------------------------------------------------------------------------
+
+def _normalize_dt(value: str | None) -> str | None:
+    """Normalize a datetime-local string (2026-06-25T14:30) to SQLite's
+    'YYYY-MM-DD HH:MM:SS' so string comparisons against datetime('now') work."""
+    if not value:
+        return value
+    v = value.strip().replace("T", " ")
+    if len(v) == 16:  # missing seconds
+        v += ":00"
+    return v
+
+@app.get("/api/interviews")
+def list_interviews(status: str | None = None, search: str | None = None):
+    return db.get_interviews(status=status, search=search)
+
+@app.get("/api/interviews/stats")
+def interview_stats():
+    return db.get_interview_stats()
+
+@app.get("/api/interviews/{interview_id}")
+def get_interview(interview_id: int):
+    interview = db.get_interview(interview_id)
+    if not interview:
+        raise HTTPException(404, "Interview not found")
+    return interview
+
+class InterviewFetchUrl(BaseModel):
+    url: str
+
+@app.post("/api/interviews/fetch-url")
+def interview_fetch_url(body: InterviewFetchUrl):
+    """Parse a job URL and return prefillable fields (does NOT create anything)."""
+    url = body.url.strip()
+    if not url:
+        raise HTTPException(400, "URL is required")
+
+    fetched = _fetch_jd_from_url(url)
+    title = fetched.get("title", "")
+    company = fetched.get("company", "")
+    location = fetched.get("location", "")
+    apply_link = fetched.get("apply_link") or url
+
+    # Fallback: scrape the <title> tag for generic / unsupported pages.
+    if not title:
+        try:
+            r = http_requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code == 200:
+                m = re.search(r"<title[^>]*>([^<]+)</title>", r.text, re.I)
+                if m:
+                    raw = m.group(1).strip()
+                    for sep in [" - ", " | ", " at ", " — ", " – "]:
+                        if sep in raw:
+                            parts = raw.split(sep)
+                            title = parts[0].strip()
+                            if not company and len(parts) > 1:
+                                company = parts[1].strip()
+                            break
+                    else:
+                        title = raw
+        except Exception:
+            pass
+
+    return {"role": title, "company": company, "location": location, "apply_link": apply_link}
+
+@app.post("/api/interviews")
+def create_interview(body: InterviewCreate):
+    data = body.model_dump()
+    job_id = data.get("job_id")
+    application_id = data.get("application_id")
+
+    # Prefill from a job queue entry or an existing application when provided.
+    if application_id:
+        appn = db.get_application(application_id)
+        if not appn:
+            raise HTTPException(404, "Application not found")
+        data["source"] = "application"
+        data.setdefault("job_id", appn.get("job_id"))
+        data["job_id"] = data.get("job_id") or appn.get("job_id")
+        if not data.get("company"): data["company"] = appn.get("company")
+        if not data.get("role"): data["role"] = appn.get("title", "")
+        if not data.get("location"): data["location"] = appn.get("location", "")
+        if not data.get("apply_link"): data["apply_link"] = appn.get("apply_link", "")
+        if not data.get("contact_linkedin"): data["contact_linkedin"] = appn.get("job_contact_linkedin") or ""
+        if data.get("salary_min") is None: data["salary_min"] = appn.get("salary_min")
+        if data.get("salary_max") is None: data["salary_max"] = appn.get("salary_max")
+    elif job_id:
+        job = db.get_job(job_id)
+        if not job:
+            raise HTTPException(404, "Job not found")
+        data["source"] = "queue"
+        if not data.get("company"): data["company"] = job.get("company")
+        if not data.get("role"): data["role"] = job.get("title", "")
+        if not data.get("location"): data["location"] = job.get("location", "")
+        if not data.get("apply_link"): data["apply_link"] = job.get("apply_link", "")
+        if not data.get("contact_linkedin"): data["contact_linkedin"] = job.get("contact_linkedin") or ""
+        if data.get("salary_min") is None: data["salary_min"] = job.get("salary_min")
+        if data.get("salary_max") is None: data["salary_max"] = job.get("salary_max")
+    else:
+        data["source"] = "external"
+
+    if not data.get("company"):
+        raise HTTPException(400, "company is required")
+
+    # Drop keys the DB layer doesn't accept.
+    data = {k: v for k, v in data.items() if k in db.INTERVIEW_FIELDS}
+    interview_id = db.create_interview(**data)
+    return {"id": interview_id}
+
+@app.patch("/api/interviews/{interview_id}")
+def update_interview(interview_id: int, body: InterviewUpdate):
+    db.update_interview(interview_id, **body.model_dump(exclude_none=True))
+    return {"ok": True}
+
+@app.delete("/api/interviews/{interview_id}")
+def delete_interview(interview_id: int):
+    db.delete_interview(interview_id)
+    return {"ok": True}
+
+@app.post("/api/interviews/{interview_id}/rounds")
+def add_round(interview_id: int, body: RoundCreate):
+    interview = db.get_interview(interview_id)
+    if not interview:
+        raise HTTPException(404, "Interview not found")
+    data = body.model_dump()
+    create_rem = data.pop("create_reminder", False)
+    reminder_title = data.pop("reminder_title", None)
+    data["scheduled_at"] = _normalize_dt(data.get("scheduled_at"))
+
+    reminder_id = None
+    if create_rem and data.get("scheduled_at"):
+        title = reminder_title or f"{interview['company']} — {data.get('name') or 'Interview round'}"
+        reminder_id = db.create_reminder(
+            title=title,
+            due_date=data["scheduled_at"],
+            application_id=interview.get("application_id"),
+            job_id=interview.get("job_id"),
+        )
+
+    round_data = {k: v for k, v in data.items() if k in db.ROUND_FIELDS}
+    round_data["interview_id"] = interview_id
+    round_data["reminder_id"] = reminder_id
+    round_id = db.add_round(**round_data)
+    return {"id": round_id, "reminder_id": reminder_id}
+
+@app.patch("/api/interviews/rounds/{round_id}")
+def update_round(round_id: int, body: RoundUpdate):
+    existing = db.get_round(round_id)
+    if not existing:
+        raise HTTPException(404, "Round not found")
+    updates = body.model_dump(exclude_none=True)
+    if "scheduled_at" in updates:
+        updates["scheduled_at"] = _normalize_dt(updates["scheduled_at"])
+    db.update_round(round_id, **updates)
+    # Keep a linked reminder's due date in sync.
+    if "scheduled_at" in updates and existing.get("reminder_id"):
+        db.update_reminder(existing["reminder_id"], due_date=updates["scheduled_at"])
+    return {"ok": True}
+
+@app.delete("/api/interviews/rounds/{round_id}")
+def delete_round(round_id: int):
+    existing = db.get_round(round_id)
+    if existing and existing.get("reminder_id"):
+        db.delete_reminder(existing["reminder_id"])
+    db.delete_round(round_id)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Database backup endpoints (manual push to the private git backup repo)
+# ---------------------------------------------------------------------------
+
+import subprocess as _subprocess
+
+def _backup_repo_dir() -> Path | None:
+    d = os.getenv("BACKUP_GIT_DIR")
+    if not d:
+        return None
+    p = Path(d)
+    if not p.is_absolute():
+        p = (Path(__file__).resolve().parent / p).resolve()
+    return p
+
+def _git_out(repo: Path, *args: str) -> str:
+    try:
+        r = _subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, timeout=15)
+        return r.stdout.strip()
+    except Exception:
+        return ""
+
+@app.get("/api/backup/status")
+def backup_status():
+    repo = _backup_repo_dir()
+    configured = bool(repo and (repo / ".git").exists())
+    info = {
+        "configured": configured,
+        "repo": str(repo) if repo else None,
+        "targets": os.getenv("BACKUP_TARGETS", "local"),
+    }
+    if configured:
+        info["last_commit"] = _git_out(repo, "log", "-1", "--format=%h %cI %s") or None
+        info["has_remote"] = bool(_git_out(repo, "remote"))
+        # count commits not yet pushed (best-effort)
+        unpushed = _git_out(repo, "log", "--oneline", "@{u}..HEAD")
+        info["unpushed"] = len([l for l in unpushed.splitlines() if l.strip()]) if unpushed else 0
+    return info
+
+@app.post("/api/backup/push")
+def backup_push():
+    """Snapshot the DB and push it to the private git backup repo (synchronous)."""
+    repo = _backup_repo_dir()
+    if not repo or not (repo / ".git").exists():
+        raise HTTPException(400, "BACKUP_GIT_DIR is not set to a valid git repo. See BACKUP.md.")
+    try:
+        proc = _subprocess.run(
+            [sys.executable, "backup_db.py", "--targets", "git"],
+            cwd=str(Path(__file__).resolve().parent),
+            capture_output=True, text=True, timeout=300,
+        )
+    except _subprocess.TimeoutExpired:
+        raise HTTPException(504, "Backup timed out (push took too long).")
+    output = (proc.stdout or "") + (proc.stderr or "")
+    last_commit = _git_out(repo, "log", "-1", "--format=%h %cI %s")
+    if proc.returncode != 0:
+        raise HTTPException(500, f"Backup failed:\n{output.strip()[-800:]}")
+    return {"ok": True, "output": output.strip(), "last_commit": last_commit or None}
 
 
 # ---------------------------------------------------------------------------
