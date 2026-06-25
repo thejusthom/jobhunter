@@ -316,6 +316,46 @@ def unmatched_ids():
         ).fetchall()
         return {"ids": [r["id"] for r in rows]}
 
+# --- Batch matching as a server-side background job (survives page refresh) ---
+match_status = {"running": False, "done": 0, "total": 0, "last_run": None}
+
+def _run_match_all(ids: list[str]):
+    match_status.update(running=True, done=0, total=len(ids))
+    act = activity.start("matching", "Matching jobs", total=len(ids))
+    try:
+        for i, jid in enumerate(ids):
+            try:
+                job = db.get_job(jid)
+                if job:
+                    activity.update(act, detail=f"{job.get('title','')} @ {job.get('company','')} ({i+1}/{len(ids)})", advance=True)
+                result = match_job(jid)  # persists match_pct/summary to the DB
+                if result and (result.get("match_pct") or 0) >= 50:
+                    try:
+                        generate_outreach(jid)
+                    except Exception:
+                        pass  # outreach is a bonus
+            except Exception as e:
+                _log(f"[match-all] {jid} failed: {e}")
+            match_status["done"] = i + 1
+    finally:
+        match_status["running"] = False
+        match_status["last_run"] = datetime.now(timezone.utc).isoformat()
+        activity.finish(act, summary=f"Matched {match_status['done']}/{match_status['total']}")
+
+@app.get("/api/jobs/match-status")
+def get_match_status():
+    return match_status
+
+@app.post("/api/jobs/match-all")
+def match_all(background_tasks: BackgroundTasks):
+    if match_status["running"]:
+        raise HTTPException(409, "Matching already running")
+    ids = unmatched_ids()["ids"]
+    if not ids:
+        return {"status": "idle", "total": 0, "message": "All pending jobs are already matched"}
+    background_tasks.add_task(_run_match_all, ids)
+    return {"status": "started", "total": len(ids)}
+
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str):
     job = db.get_job(job_id)

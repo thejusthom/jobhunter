@@ -22,12 +22,9 @@ export default function Dashboard() {
 
   useEffect(() => { load() }, [])
 
-  const runDiscovery = async ({ jsearch = true, ats = true, adzuna = true, simplify = true } = {}) => {
-    setDiscovering(true)
-    setDiscoveryPhase('Starting...')
-    try {
-      await api.triggerDiscovery({ skip_jsearch: !jsearch, skip_ats: !ats, skip_adzuna: !adzuna, skip_simplify: !simplify, freshness_hours: freshness })
-      const poll = setInterval(async () => {
+  const pollDiscovery = () => {
+    const poll = setInterval(async () => {
+      try {
         const s = await api.getDiscoveryStatus()
         setDiscoveryPhase(s.phase || 'Processing...')
         if (!s.running) {
@@ -36,7 +33,23 @@ export default function Dashboard() {
           setDiscoveryPhase('')
           load()
         }
-      }, 2000)
+      } catch (_) { /* transient */ }
+    }, 2000)
+  }
+
+  // Restore an in-progress discovery after a page refresh (it runs server-side).
+  useEffect(() => {
+    api.getDiscoveryStatus().then(s => {
+      if (s.running) { setDiscovering(true); setDiscoveryPhase(s.phase || 'Processing...'); pollDiscovery() }
+    }).catch(() => {})
+  }, [])
+
+  const runDiscovery = async ({ jsearch = true, ats = true, adzuna = true, simplify = true } = {}) => {
+    setDiscovering(true)
+    setDiscoveryPhase('Starting...')
+    try {
+      await api.triggerDiscovery({ skip_jsearch: !jsearch, skip_ats: !ats, skip_adzuna: !adzuna, skip_simplify: !simplify, freshness_hours: freshness })
+      pollDiscovery()
     } catch (e) {
       alert(e.message)
       setDiscovering(false)

@@ -79,6 +79,8 @@ export const api = {
   cleanupIrrelevant: () => request('/jobs/cleanup-irrelevant', { method: 'POST' }),
   skipLowScores: (threshold = 60) => request(`/jobs/skip-low-scores?threshold=${threshold}`, { method: 'POST' }),
   getUnmatchedIds: () => request('/jobs/unmatched-ids'),
+  matchAll: () => request('/jobs/match-all', { method: 'POST' }),
+  getMatchStatus: () => request('/jobs/match-status'),
   getCollectedEmails: (params = {}) => {
     const q = new URLSearchParams(params).toString();
     return request(`/collected-emails${q ? '?' + q : ''}`);

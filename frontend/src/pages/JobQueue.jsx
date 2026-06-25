@@ -450,29 +450,42 @@ export default function JobQueue() {
   const [batchMatching, setBatchMatching] = useState(false)
   const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 })
 
+  // Keep a stable ref to load() so the polling effect doesn't churn.
+  const loadRef = useRef(load)
+  loadRef.current = load
+
+  // Restore in-progress matching after a page refresh (it runs server-side now).
+  useEffect(() => {
+    api.getMatchStatus().then(s => {
+      if (s.running) { setBatchMatching(true); setBatchProgress({ done: s.done, total: s.total }) }
+    }).catch(() => {})
+  }, [])
+
+  // While matching is running, poll the server for progress.
+  useEffect(() => {
+    if (!batchMatching) return
+    const poll = setInterval(async () => {
+      try {
+        const s = await api.getMatchStatus()
+        setBatchProgress({ done: s.done, total: s.total })
+        if (!s.running) { setBatchMatching(false); loadRef.current(true) }
+      } catch (_) { /* transient */ }
+    }, 1500)
+    return () => clearInterval(poll)
+  }, [batchMatching])
+
   const handleMatchAll = async () => {
     const { ids } = await api.getUnmatchedIds()
     if (ids.length === 0) return alert('All pending jobs are already matched')
     if (!confirm(`Run AI match + outreach on ${ids.length} unmatched jobs across all pages?`)) return
-
-    setBatchMatching(true)
-    setBatchProgress({ done: 0, total: ids.length })
-
-    for (let i = 0; i < ids.length; i++) {
-      try {
-        const result = await api.matchJob(ids[i])
-        if (result.match_pct >= 50) {
-          try {
-            await api.generateOutreach(ids[i], {})
-          } catch (_) { /* outreach is bonus */ }
-        }
-      } catch (_) { /* continue on error */ }
-      setBatchProgress({ done: i + 1, total: ids.length })
-      if ((i + 1) % 5 === 0) load(true)
+    try {
+      const res = await api.matchAll()
+      setBatchProgress({ done: 0, total: res.total || ids.length })
+      setBatchMatching(true) // triggers the polling effect above
+    } catch (e) {
+      if (String(e.message).toLowerCase().includes('already running')) setBatchMatching(true)
+      else alert(e.message)
     }
-
-    setBatchMatching(false)
-    load(true)
   }
 
   const closeDetail = () => {
