@@ -25,22 +25,9 @@ export default function Settings() {
   const [backup, setBackup] = useState(null)
   const [backupBusy, setBackupBusy] = useState(false)
   const [backupMsg, setBackupMsg] = useState(null) // { ok, text }
-  const [syncing, setSyncing] = useState(false)
-
-  const syncDb = async () => {
-    setSyncing(true)
-    try {
-      await api.syncDb()
-      setBackupMsg({ ok: true, text: 'DB synced to Backblaze B2.' })
-    } catch (e) {
-      setBackupMsg({ ok: false, text: 'Sync failed: ' + e.message })
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   const stopServer = async () => {
-    if (!confirm('Sync DB to B2 and shut down the server?')) return
+    if (!confirm('Shut down the server?')) return
     try { await api.shutdownServer() } catch (_) {}
   }
 
@@ -144,17 +131,9 @@ export default function Settings() {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <button
-              onClick={syncDb}
-              disabled={syncing}
-              className="text-xs px-2.5 py-2 rounded-lg bg-surface-overlay text-text-secondary border border-border hover:border-border-hover disabled:opacity-50 transition-all btn-press whitespace-nowrap"
-              title="Push DB to Backblaze B2 now (legacy Litestream sync)"
-            >
-              {syncing ? 'Syncing…' : '↑ Sync to B2'}
-            </button>
-            <button
               onClick={stopServer}
               className="text-xs px-2.5 py-2 rounded-lg bg-red-900/15 text-danger border border-red-500/30 hover:bg-red-900/25 transition-all btn-press whitespace-nowrap"
-              title="Checkpoint WAL, sync to B2, then stop the server"
+              title="Checkpoint WAL, then stop the server"
             >
               ⏻ Stop Server
             </button>

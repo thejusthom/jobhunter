@@ -1,4 +1,4 @@
-# Start the server with Litestream replication (Windows).
+# Start the server (Windows). Backblaze/Litestream disabled - GitHub backup repo only.
 # Usage: .\scripts\start.ps1
 
 Set-Location (Split-Path $PSScriptRoot -Parent)
@@ -10,14 +10,11 @@ Get-Content .env | ForEach-Object {
     }
 }
 
-# Restore DB from B2 if it doesn't exist locally (fresh device)
+# Fresh device with no local DB: pull the latest snapshot from the GitHub backup repo.
 if (-not (Test-Path jobhunter.db)) {
-    Write-Host "[litestream] No local DB found - restoring from B2..."
-    & .\litestream.exe restore -config litestream.yml jobhunter.db
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[litestream] No backup found, starting fresh"
-    }
+    Write-Host "[backup] No local DB - restoring latest from GitHub backup repo..."
+    python restore_db.py
 }
 
-Write-Host "[litestream] Starting replication + server..."
-& .\litestream.exe replicate -config litestream.yml -exec "python -m uvicorn server:app --host 0.0.0.0 --port 8000"
+Write-Host "[backend] Starting server (GitHub backup only; Backblaze disabled)..."
+python -m uvicorn server:app --host 0.0.0.0 --port 8000

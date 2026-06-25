@@ -2603,29 +2603,13 @@ def cleanup_non_us():
 
 @app.post("/api/sync-db")
 def sync_db():
-    """Trigger an immediate Litestream replication to B2."""
-    import subprocess
-    act = activity.start("backup", "Sync to B2")
-    try:
-        activity.update(act, detail="Replicating to Backblaze B2…")
-        result = subprocess.run(
-            ["./litestream.exe", "replicate", "-config", "litestream.yml", "-exec", "exit 0"],
-            capture_output=True, text=True, timeout=60,
-        )
-        _log(f"[sync-db] Manual sync triggered (exit={result.returncode})")
-        activity.finish(act, summary="Synced to B2")
-        return {"ok": True, "message": "DB synced to B2"}
-    except FileNotFoundError:
-        activity.finish(act, summary="litestream.exe not found", status="error")
-        raise HTTPException(500, "litestream.exe not found")
-    except subprocess.TimeoutExpired:
-        activity.finish(act, summary="Timed out", status="error")
-        raise HTTPException(500, "Sync timed out")
+    """Backblaze/Litestream B2 sync is disabled. Use the GitHub backup (/api/backup/push)."""
+    raise HTTPException(410, "Backblaze sync is disabled. Use 'Back up now' (GitHub backup) instead.")
 
 
 @app.post("/api/shutdown")
 def shutdown_server():
-    """Checkpoint WAL, sync to B2, then shut down the server."""
+    """Checkpoint WAL, then shut down the server."""
     import signal
     _log("[shutdown] Graceful shutdown requested via API")
     try:
@@ -2641,7 +2625,7 @@ def shutdown_server():
         os.kill(os.getpid(), signal.SIGTERM)
 
     threading.Thread(target=_kill, daemon=True).start()
-    return {"ok": True, "message": "Server shutting down — DB synced to B2"}
+    return {"ok": True, "message": "Server shutting down"}
 
 
 @app.post("/api/jobs/cleanup-irrelevant")
