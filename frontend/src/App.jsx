@@ -31,10 +31,95 @@ const navItems = [
   { to: '/settings', label: 'Settings' },
 ]
 
+const navLinkClass = (isActive) =>
+  `px-3 py-1.5 rounded-md text-sm whitespace-nowrap transition-all duration-150 ${
+    isActive
+      ? 'bg-accent/15 text-accent font-medium'
+      : 'text-text-tertiary hover:text-text-secondary hover:bg-surface-raised'
+  }`
+
+// Overflow dropdown holding nav items that don't fit inline.
+function NavMoreMenu({ items }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const location = useLocation()
+  useEffect(() => { setOpen(false) }, [location.pathname])
+  useEffect(() => {
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [])
+  const anyActive = items.some(i => i.to === location.pathname)
+  return (
+    <div className="relative shrink-0" ref={ref}>
+      <button
+        onClick={() => setOpen(!open)}
+        className={`px-2.5 py-1.5 rounded-md text-sm whitespace-nowrap flex items-center gap-1 transition-all duration-150 ${
+          anyActive ? 'bg-accent/15 text-accent font-medium' : 'text-text-tertiary hover:text-text-secondary hover:bg-surface-raised'
+        }`}
+      >
+        More
+        <svg className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 w-44 bg-surface-raised border border-border rounded-xl shadow-2xl shadow-black/40 z-50 animate-fade-in overflow-hidden py-1">
+          {items.map(({ to, label }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={to === '/'}
+              className={({ isActive }) =>
+                `block px-3 py-2 text-sm transition-colors ${
+                  isActive ? 'bg-accent/15 text-accent font-medium' : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary'
+                }`
+              }
+            >
+              {label}
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function App() {
   const location = useLocation()
   const navigate = useNavigate()
   const [mobileNav, setMobileNav] = useState(false)
+
+  // --- Priority navigation: show as many items as fit, collapse the rest into "More" ---
+  const navRowRef = useRef(null)
+  const navMeasureRef = useRef(null)
+  const [visibleCount, setVisibleCount] = useState(navItems.length)
+
+  useEffect(() => {
+    const recompute = () => {
+      const row = navRowRef.current
+      const measure = navMeasureRef.current
+      if (!row || !measure) return
+      const available = row.clientWidth
+      const kids = Array.from(measure.children) // navItems… then the "More" ghost
+      if (kids.length < navItems.length + 1) return
+      const GAP = 4
+      const moreW = kids[kids.length - 1].offsetWidth + GAP
+      const widths = kids.slice(0, navItems.length).map(c => c.offsetWidth + GAP)
+      const total = widths.reduce((a, b) => a + b, 0)
+      if (total <= available) { setVisibleCount(navItems.length); return }
+      let used = 0, count = 0
+      for (const w of widths) {
+        if (used + w <= available - moreW) { used += w; count++ } else break
+      }
+      setVisibleCount(count)
+    }
+    recompute()
+    const ro = new ResizeObserver(recompute)
+    if (navRowRef.current) ro.observe(navRowRef.current)
+    window.addEventListener('resize', recompute)
+    return () => { ro.disconnect(); window.removeEventListener('resize', recompute) }
+  }, [])
 
   useEffect(() => {
     const match = navItems.find(n => n.to === location.pathname)
@@ -118,27 +203,29 @@ export default function App() {
     <ActivityProvider>
     <div className="min-h-screen bg-[#0f0f0f] text-text-primary">
       <nav className="bg-surface border-b border-border sticky top-0 z-50 backdrop-blur-sm bg-surface/95">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center h-14 gap-1">
-          <span className="text-base font-semibold text-white tracking-tight mr-4 sm:mr-8">JobHunter</span>
+        <div className="w-full px-4 sm:px-6 flex items-center h-14 gap-1 relative">
+          <span className="text-base font-semibold text-white tracking-tight mr-4 sm:mr-8 shrink-0">JobHunter</span>
 
-          {/* Desktop nav */}
-          <div className="hidden md:flex items-center gap-1 overflow-x-auto">
-            {navItems.map(({ to, label }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={to === '/'}
-                className={({ isActive }) =>
-                  `px-3 py-1.5 rounded-md text-sm whitespace-nowrap transition-all duration-150 ${
-                    isActive
-                      ? 'bg-accent/15 text-accent font-medium'
-                      : 'text-text-tertiary hover:text-text-secondary hover:bg-surface-raised'
-                  }`
-                }
-              >
+          {/* Desktop nav — fits what it can, overflow goes to "More" */}
+          <div ref={navRowRef} className="hidden md:flex items-center gap-1 flex-1 min-w-0 overflow-hidden">
+            {navItems.slice(0, visibleCount).map(({ to, label }) => (
+              <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => navLinkClass(isActive)}>
                 {label}
               </NavLink>
             ))}
+            {visibleCount < navItems.length && <NavMoreMenu items={navItems.slice(visibleCount)} />}
+          </div>
+
+          {/* Hidden measurer: all items + a "More" ghost, used to compute how many fit */}
+          <div
+            ref={navMeasureRef}
+            aria-hidden
+            className="hidden md:flex items-center gap-1 absolute left-0 -top-[9999px] invisible pointer-events-none"
+          >
+            {navItems.map(({ to, label }) => (
+              <span key={to} className={navLinkClass(false)}>{label}</span>
+            ))}
+            <span className="px-2.5 py-1.5 text-sm whitespace-nowrap flex items-center gap-1">More ▾</span>
           </div>
 
           {/* Background activity */}
