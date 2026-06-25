@@ -252,7 +252,9 @@ function InterviewCard({ iv, onChangeStatus, onDelete, onReload }) {
           {loadingDetail || !detail ? (
             <p className="text-xs text-text-muted animate-pulse">Loading rounds...</p>
           ) : (
-            <ExpandedDetail detail={detail} onReload={async () => { await loadDetail(); onReload() }} onDelete={onDelete} />
+            // Refresh only this card's detail on round/sponsorship edits so the list
+            // doesn't re-sort and make the card jump away from the user.
+            <ExpandedDetail detail={detail} onReload={loadDetail} onDelete={onDelete} />
           )}
         </div>
       )}
@@ -407,29 +409,60 @@ function AddRoundForm({ interviewId, nextSeq, onReload }) {
   const blank = { name: '', type: 'video', scheduled_at: '', interviewer: '', meeting_link: '', notes: '', create_reminder: true }
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(blank)
+  const [staged, setStaged] = useState([])   // rounds queued to save together
   const [saving, setSaving] = useState(false)
 
-  const submit = async (e) => {
+  const isFilled = (r) => Boolean((r.name && r.name.trim()) || r.scheduled_at)
+  const reset = () => { setForm(blank); setStaged([]) }
+
+  // Push the current entry onto the queue and start a fresh one.
+  const stageCurrent = () => {
+    if (!isFilled(form)) return
+    setStaged(prev => [...prev, form])
+    setForm({ ...blank, create_reminder: form.create_reminder })
+  }
+  const removeStaged = (i) => setStaged(prev => prev.filter((_, idx) => idx !== i))
+
+  const saveAll = async (e) => {
     e.preventDefault()
+    const all = [...staged]
+    if (isFilled(form)) all.push(form)
+    if (all.length === 0) return
     setSaving(true)
     try {
-      await api.addRound(interviewId, { ...form, seq: nextSeq })
-      setForm(blank)
+      for (let i = 0; i < all.length; i++) {
+        await api.addRound(interviewId, { ...all[i], seq: nextSeq + i })
+      }
+      reset()
       setOpen(false)
-      onReload()
+      onReload()  // single refresh after all rounds are saved
     } finally { setSaving(false) }
   }
 
   if (!open) {
     return (
       <button onClick={() => setOpen(true)} className="text-xs px-2.5 py-1 rounded-md bg-surface-overlay hover:bg-border text-text-secondary border border-border btn-press">
-        + Add round
+        + Add round(s)
       </button>
     )
   }
 
+  const total = staged.length + (isFilled(form) ? 1 : 0)
+
   return (
-    <form onSubmit={submit} className="bg-surface border border-border rounded-lg p-3 space-y-2">
+    <form onSubmit={saveAll} className="bg-surface border border-border rounded-lg p-3 space-y-2">
+      {staged.length > 0 && (
+        <div className="space-y-1">
+          {staged.map((r, i) => (
+            <div key={i} className="flex items-center justify-between text-xs bg-surface-overlay border border-border rounded-md px-2 py-1">
+              <span className="text-text-secondary truncate">
+                #{nextSeq + i} · {r.name || 'Round'} · {r.type.replace('_', ' ')}{r.scheduled_at ? ` · ${fmtDate(r.scheduled_at)}` : ''}
+              </span>
+              <button type="button" onClick={() => removeStaged(i)} className="text-red-400/70 hover:text-red-400 shrink-0 ml-2" title="Remove">×</button>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <input placeholder="Round name (e.g. Recruiter Screen)" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className={inputClass} />
         <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} className={inputClass}>
@@ -444,11 +477,16 @@ function AddRoundForm({ interviewId, nextSeq, onReload }) {
         <input type="checkbox" checked={form.create_reminder} onChange={e => setForm({ ...form, create_reminder: e.target.checked })} />
         Remind me (adds to the notification bell when a date is set)
       </label>
-      <div className="flex gap-2">
-        <button type="submit" disabled={saving} className="text-xs px-3 py-1.5 rounded-lg bg-accent hover:bg-accent-hover disabled:opacity-50 text-white btn-press">
-          {saving ? 'Adding...' : 'Add round'}
+      <div className="flex gap-2 flex-wrap">
+        <button type="button" onClick={stageCurrent} disabled={!isFilled(form)}
+          className="text-xs px-3 py-1.5 rounded-lg bg-surface-overlay hover:bg-border disabled:opacity-40 text-text-secondary border border-border btn-press">
+          + Add another
         </button>
-        <button type="button" onClick={() => { setOpen(false); setForm(blank) }} className="text-xs px-3 py-1.5 rounded-lg bg-surface-overlay text-text-secondary border border-border">Cancel</button>
+        <button type="submit" disabled={saving || total === 0}
+          className="text-xs px-3 py-1.5 rounded-lg bg-accent hover:bg-accent-hover disabled:opacity-50 text-white btn-press">
+          {saving ? 'Saving...' : `Save ${total} round${total === 1 ? '' : 's'}`}
+        </button>
+        <button type="button" onClick={() => { reset(); setOpen(false) }} className="text-xs px-3 py-1.5 rounded-lg bg-surface-overlay text-text-secondary border border-border">Cancel</button>
       </div>
     </form>
   )
