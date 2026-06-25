@@ -867,6 +867,78 @@ def _fetch_jd_from_url(url: str) -> dict:
     return result
 
 
+def _extract_ats_board(url: str) -> dict | None:
+    """Parse a job URL into a scheduler company entry {ats, slug, [wd_num, site]}.
+
+    Returns None for URLs we can't turn into a re-scannable board (generic pages,
+    or fixed-fetcher types like amazon/apple/linkedin that don't use a slug)."""
+    u = (url or "").strip()
+
+    # Workday: <tenant>.wd<NN>.myworkdayjobs.com/[wday/.../][locale/]<site>/...
+    m = re.search(r"https?://([A-Za-z0-9_-]+)\.wd(\d+)\.myworkdayjobs\.com/"
+                  r"(?:wday/[^/]+/)?(?:[a-z]{2}-[A-Za-z]{2,}/)?([A-Za-z0-9_-]+)", u)
+    if m:
+        return {"ats": "workday", "slug": m.group(1), "wd_num": int(m.group(2)), "site": m.group(3)}
+
+    # Greenhouse: boards/job-boards.greenhouse.io/<slug>/... or <slug>.greenhouse.io
+    m = re.search(r"https?://(?:job-)?boards\.greenhouse\.io/(?:embed/)?([A-Za-z0-9_-]+)", u)
+    if m and m.group(1).lower() not in ("embed", "job_app"):
+        return {"ats": "greenhouse", "slug": m.group(1)}
+    m = re.search(r"https?://([A-Za-z0-9_-]+)\.greenhouse\.io", u)
+    if m and m.group(1).lower() not in ("boards", "job-boards", "boards-api"):
+        return {"ats": "greenhouse", "slug": m.group(1)}
+
+    m = re.search(r"https?://jobs\.lever\.co/([A-Za-z0-9_-]+)", u)
+    if m:
+        return {"ats": "lever", "slug": m.group(1)}
+
+    m = re.search(r"https?://jobs\.ashbyhq\.com/([A-Za-z0-9_-]+)", u)
+    if m:
+        return {"ats": "ashby", "slug": m.group(1)}
+
+    m = re.search(r"https?://(?:jobs|careers)\.smartrecruiters\.com/([A-Za-z0-9_-]+)", u)
+    if m:
+        return {"ats": "smartrecruiters", "slug": m.group(1)}
+
+    m = re.search(r"https?://([A-Za-z0-9_-]+)\.pinpointhq\.com", u)
+    if m:
+        return {"ats": "pinpoint", "slug": m.group(1)}
+
+    return None
+
+
+def _ensure_company_in_scheduler(name: str, board: dict | None) -> dict | None:
+    """Append a company to companies.json so the next discovery run scans its board.
+    Returns the new entry if added, else None (already present / not resolvable)."""
+    if not board or not board.get("slug"):
+        return None
+    ats, slug = board["ats"], board["slug"]
+    path = Path("companies.json")
+    try:
+        companies = json.loads(path.read_text())
+    except Exception:
+        return None
+
+    name_l = (name or "").strip().lower()
+    for c in companies:
+        same_board = c.get("ats") == ats and (c.get("slug") or "").lower() == slug.lower()
+        same_named = name_l and (c.get("name") or "").strip().lower() == name_l and c.get("ats")
+        if same_board or same_named:
+            return None  # already scanned
+
+    entry = {"name": (name or slug).strip() or slug, "ats": ats, "slug": slug}
+    if ats == "workday":
+        entry["wd_num"] = board.get("wd_num", 1)
+        entry["site"] = board.get("site", "")
+    companies.append(entry)
+    # Atomic-ish write so a concurrent discovery read never sees a partial file.
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(companies, indent=2))
+    tmp.replace(path)
+    _log(f"[scheduler] Added {entry['name']} ({ats}/{slug}) to companies.json")
+    return entry
+
+
 class AddJobByUrl(BaseModel):
     url: str
 
@@ -942,7 +1014,12 @@ def add_job_by_url(body: AddJobByUrl):
             """, (jid, title, company, location, apply_link, ats_type,
                   description, now_iso, now_iso))
 
-    return _parse_json_fields(db.get_job(jid))
+    # If this company isn't in the scheduler yet, add it so future discovery scans its board.
+    added_company = _ensure_company_in_scheduler(company, _extract_ats_board(url))
+
+    result = _parse_json_fields(db.get_job(jid))
+    result["added_company"] = added_company
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1043,7 +1120,9 @@ def add_application_by_url(body: ApplicationAddByUrl):
     )
 
     _apps_for_company.cache_clear()
-    return {"id": app_id, "title": title, "company": company, "location": location, "job_id": jid}
+    added_company = _ensure_company_in_scheduler(company, _extract_ats_board(url))
+    return {"id": app_id, "title": title, "company": company, "location": location,
+            "job_id": jid, "added_company": added_company}
 
 @app.patch("/api/applications/{app_id}")
 def update_application(app_id: int, body: ApplicationUpdate):

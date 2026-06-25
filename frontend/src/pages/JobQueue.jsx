@@ -552,6 +552,9 @@ export default function JobQueue() {
                 load()
                 setSelected(job)
                 setOutreach(null)
+                if (job.added_company) {
+                  alert(`Added ${job.added_company.name} (${job.added_company.ats}) to the scheduler — future discovery runs will scan its board.`)
+                }
               } catch (err) {
                 alert(err.message)
               }
