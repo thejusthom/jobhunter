@@ -1,6 +1,8 @@
 import { Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { api } from './api'
+import { ActivityProvider } from './ActivityContext'
+import ActivityPanel from './components/ActivityPanel'
 import Dashboard from './pages/Dashboard'
 import JobQueue from './pages/JobQueue'
 import Applications from './pages/Applications'
@@ -113,6 +115,7 @@ export default function App() {
   const visibleReminders = overdueReminders.filter(r => !dismissedIds.has(r.id))
 
   return (
+    <ActivityProvider>
     <div className="min-h-screen bg-[#0f0f0f] text-text-primary">
       <nav className="bg-surface border-b border-border sticky top-0 z-50 backdrop-blur-sm bg-surface/95">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center h-14 gap-1">
@@ -138,8 +141,13 @@ export default function App() {
             ))}
           </div>
 
+          {/* Background activity */}
+          <div className="ml-auto">
+            <ActivityPanel />
+          </div>
+
           {/* Reminder bell */}
-          <div className="relative ml-auto" ref={reminderDropdownRef}>
+          <div className="relative" ref={reminderDropdownRef}>
             <button
               onClick={() => setShowReminderDropdown(!showReminderDropdown)}
               className="relative p-2 text-text-tertiary hover:text-text-primary transition-colors"
@@ -353,5 +361,6 @@ export default function App() {
         </div>
       )}
     </div>
+    </ActivityProvider>
   )
 }

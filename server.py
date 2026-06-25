@@ -26,6 +26,7 @@ from pydantic import BaseModel
 import requests as http_requests
 import database as db
 import llm
+import activity
 from discovery import (
     JSEARCH_KEY, SCORE_THRESHOLD, QUEUE_PATH, LOG_PATH, BLACKLIST_PATH,
     load_json, save_json, score_job, is_blacklisted, already_applied, job_id,
@@ -1276,17 +1277,26 @@ def backup_push():
     repo = _backup_repo_dir()
     if not repo or not (repo / ".git").exists():
         raise HTTPException(400, "BACKUP_GIT_DIR is not set to a valid git repo. See docs/BACKUP.md.")
+    act = activity.start("backup", "DB backup")
     before = _git_out(repo, "rev-parse", "HEAD")
     try:
+        activity.update(act, detail="Snapshotting database…")
         proc = _subprocess.run(
             [sys.executable, "backup_db.py", "--targets", "git"],
             cwd=str(Path(__file__).resolve().parent),
             capture_output=True, text=True, timeout=300,
         )
     except _subprocess.TimeoutExpired:
+        activity.finish(act, summary="Timed out", status="error")
         raise HTTPException(504, "Backup timed out (push took too long).")
     output = (proc.stdout or "") + (proc.stderr or "")
+    # Forward backup_db.py's own progress lines into the feed.
+    for line in output.splitlines():
+        line = line.strip()
+        if line.startswith("[backup]"):
+            activity.log("backup", line.replace("[backup]", "").strip())
     if proc.returncode != 0:
+        activity.finish(act, summary="Failed", status="error")
         raise HTTPException(500, f"Backup failed:\n{output.strip()[-800:]}")
     after = _git_out(repo, "rev-parse", "HEAD")
     unpushed = _git_out(repo, "log", "--oneline", "@{u}..HEAD")
@@ -1294,6 +1304,8 @@ def backup_push():
     status = "pushed" if after != before else "no_change"
     if unpushed_n > 0:
         status = "committed_unpushed"
+    activity.finish(act, summary={"pushed": "Pushed to GitHub", "no_change": "Already up to date",
+                                  "committed_unpushed": "Committed (unpushed)"}[status])
     return {
         "ok": True,
         "status": status,
@@ -1366,13 +1378,18 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
     discovery_status["running"] = True
     discovery_status["phase"] = "Starting..."
     total_new = 0
+    act = activity.start("discovery", "Discovery")
+
+    def _phase(msg, **kw):
+        discovery_status["phase"] = msg
+        activity.update(act, detail=msg, **kw)
 
     date_posted_map = {24: "today", 72: "3days", 168: "week", 720: "month"}
     date_posted = min(date_posted_map.items(), key=lambda x: abs(x[0] - freshness_hours))[1]
 
     try:
         if not skip_jsearch and JSEARCH_KEY:
-            discovery_status["phase"] = "Fetching JSearch..."
+            _phase("Fetching JSearch...")
             from config import SEARCH_KEYWORDS
             qs = queries or SEARCH_KEYWORDS
             blacklist = load_json(BLACKLIST_PATH)
@@ -1425,7 +1442,7 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
 
         # --- Adzuna ---
         if not skip_adzuna and ADZUNA_APP_ID:
-            discovery_status["phase"] = "Fetching Adzuna..."
+            _phase("Fetching Adzuna...")
             from config import SEARCH_KEYWORDS
             from ats_discovery import _is_us_location
             qs = queries or SEARCH_KEYWORDS
@@ -1484,7 +1501,7 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
                     total_new += db.upsert_jobs([entry])
 
         if not skip_ats:
-            discovery_status["phase"] = "Fetching ATS companies..."
+            _phase("Fetching ATS companies...")
             companies = json.loads(Path("companies.json").read_text())
             import ats_discovery
             from ats_discovery import (
@@ -1550,8 +1567,10 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
                     f = executor.submit(_fetch_company, company)
                     futures[f] = company
 
+                activity.update(act, total=len(futures), current=0, log_it=False)
                 for future in as_completed(futures):
                     ats_type, name, raw_jobs, was_error = future.result()
+                    _phase(f"ATS · {name or ats_type} ({ats_type}) — {len(raw_jobs)} jobs", advance=True)
 
                     # Track consecutive failures per ATS type
                     if was_error or (not raw_jobs and ats_type in ("ashby",)):
@@ -1605,7 +1624,7 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
         if not skip_sponsors:
             sponsors = db.get_resolved_sponsors()
             if sponsors:
-                discovery_status["phase"] = f"Fetching {len(sponsors)} sponsor boards..."
+                _phase(f"Fetching {len(sponsors)} sponsor boards...")
                 import ats_discovery
                 from ats_discovery import (
                     fetch_greenhouse, fetch_lever, fetch_ashby,
@@ -1631,8 +1650,10 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
                 sponsor_new = 0
                 with ThreadPoolExecutor(max_workers=12) as executor:
                     futures = [executor.submit(_fetch_sponsor_board, s) for s in sponsors]
+                    activity.update(act, total=len(futures), current=0, log_it=False)
                     for future in as_completed(futures):
                         s, raw_jobs = future.result()
+                        _phase(f"Sponsor · {db.normalize_sponsor_name(s['name']).title()} — {len(raw_jobs)} jobs", advance=True)
                         if raw_jobs:
                             entries = _sponsor_jobs_to_entries(s["name"], s["ats_type"], raw_jobs, source="sponsor")
                             sponsor_new += db.upsert_jobs(entries)
@@ -1641,7 +1662,7 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
 
         # --- SimplifyJobs GitHub (New-Grad-Positions) ---
         if not skip_simplify:
-            discovery_status["phase"] = "Fetching Simplify GitHub..."
+            _phase("Fetching Simplify GitHub...")
             try:
                 simplify_jobs = fetch_simplify_github(freshness_days=max(1, freshness_hours / 24))
                 _log(f"[simplify] {len(simplify_jobs)} jobs passed filters")
@@ -1684,7 +1705,7 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
 
     finally:
         # Auto-fetch descriptions for jobs that have apply_link but no description
-        discovery_status["phase"] = "Fetching missing descriptions..."
+        _phase("Fetching missing descriptions...")
         try:
             no_desc_jobs = db.get_db().execute(
                 "SELECT id, apply_link FROM jobs WHERE (description IS NULL OR description = '') AND apply_link != '' AND status = 'pending' LIMIT 50"
@@ -1706,6 +1727,7 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
         discovery_status["phase"] = ""
         discovery_status["last_run"] = now
         discovery_status["new_jobs"] = total_new
+        activity.finish(act, summary=f"{total_new} new jobs")
         # Persist so it survives server restarts
         db.kv_set("discovery_last_run", now)
         db.kv_set("discovery_new_jobs", str(total_new))
@@ -1724,6 +1746,11 @@ def trigger_discovery(body: DiscoverRequest, background_tasks: BackgroundTasks):
 def get_discovery_status():
     return discovery_status
 
+@app.get("/api/activity")
+def get_activity():
+    """Live, detailed background-activity feed (tasks + recent events)."""
+    return activity.snapshot()
+
 
 # ---------------------------------------------------------------------------
 # LLM JD match + resume recommendation + hard-skip analysis
@@ -1738,6 +1765,7 @@ def match_job(job_id: str):
     jd = job.get("description", "")
     title = job.get("title", "")
     company = job.get("company", "")
+    activity.log("matching", f"Matching {title} @ {company}")
 
     # Auto-fetch JD if missing (e.g. Simplify jobs have no description)
     if not jd.strip() and job.get("apply_link"):
@@ -2537,16 +2565,21 @@ def cleanup_non_us():
 def sync_db():
     """Trigger an immediate Litestream replication to B2."""
     import subprocess
+    act = activity.start("backup", "Sync to B2")
     try:
+        activity.update(act, detail="Replicating to Backblaze B2…")
         result = subprocess.run(
             ["./litestream.exe", "replicate", "-config", "litestream.yml", "-exec", "exit 0"],
             capture_output=True, text=True, timeout=60,
         )
         _log(f"[sync-db] Manual sync triggered (exit={result.returncode})")
+        activity.finish(act, summary="Synced to B2")
         return {"ok": True, "message": "DB synced to B2"}
     except FileNotFoundError:
+        activity.finish(act, summary="litestream.exe not found", status="error")
         raise HTTPException(500, "litestream.exe not found")
     except subprocess.TimeoutExpired:
+        activity.finish(act, summary="Timed out", status="error")
         raise HTTPException(500, "Sync timed out")
 
 

@@ -69,6 +69,7 @@ export const api = {
   getDashboard: () => request('/dashboard'),
   triggerDiscovery: (data = {}) => request('/discover', { method: 'POST', body: JSON.stringify(data) }),
   getDiscoveryStatus: () => request('/discover/status'),
+  getActivity: () => request('/activity'),
 
   getEvaluations: (limit = 50) => request(`/evaluations?limit=${limit}`),
   getAnalytics: () => request('/analytics'),
