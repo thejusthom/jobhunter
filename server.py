@@ -2730,7 +2730,7 @@ def unskip_unrated(days: int = 7):
             """UPDATE jobs SET status = 'pending', acted_at = ?
                WHERE status = 'skipped'
                  AND match_pct IS NULL
-                 AND acted_at >= datetime('now', ? || ' days')""",
+                 AND (acted_at IS NULL OR acted_at >= datetime('now', ? || ' days'))""",
             (datetime.now(timezone.utc).isoformat(), f"-{days}"),
         )
         return {"unskipped": r.rowcount, "days": days}
