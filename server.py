@@ -2721,6 +2721,38 @@ def skip_low_scores(threshold: int = 60):
         )
         return {"skipped": r.rowcount, "threshold": threshold}
 
+
+@app.post("/api/jobs/unskip-unrated")
+def unskip_unrated(days: int = 7):
+    """Restore skipped jobs that were never rated (match_pct IS NULL) from the last N days back to pending."""
+    with db.get_db() as conn:
+        r = conn.execute(
+            """UPDATE jobs SET status = 'pending', acted_at = ?
+               WHERE status = 'skipped'
+                 AND match_pct IS NULL
+                 AND acted_at >= datetime('now', ? || ' days')""",
+            (datetime.now(timezone.utc).isoformat(), f"-{days}"),
+        )
+        return {"unskipped": r.rowcount, "days": days}
+
+
+@app.post("/api/jobs/skip-older-than")
+def skip_older_than(days: int = 7, date_field: str = "discovered_at"):
+    """Skip pending unrated jobs whose posted_at or discovered_at is older than N days."""
+    if date_field not in ("posted_at", "discovered_at"):
+        raise HTTPException(400, "date_field must be 'posted_at' or 'discovered_at'")
+    with db.get_db() as conn:
+        r = conn.execute(
+            f"""UPDATE jobs SET status = 'skipped', acted_at = ?
+                WHERE status = 'pending'
+                  AND match_pct IS NULL
+                  AND {date_field} != ''
+                  AND {date_field} < datetime('now', ? || ' days')""",
+            (datetime.now(timezone.utc).isoformat(), f"-{days}"),
+        )
+        return {"skipped": r.rowcount, "days": days, "date_field": date_field}
+
+
 @app.post("/api/jobs/clear-queue")
 def clear_queue():
     count = db.clear_pending_jobs()

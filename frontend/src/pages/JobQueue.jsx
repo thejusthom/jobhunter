@@ -531,6 +531,42 @@ export default function JobQueue() {
             )}
             {filter === 'pending' && jobs.length > 0 && (
               <button
+                onClick={async () => {
+                  const input = prompt('Skip unrated pending jobs older than how many days?\n(uses "Added" date)', '7')
+                  if (input === null) return
+                  const days = parseInt(input, 10)
+                  if (!days || days < 1) return alert('Enter a positive number of days.')
+                  const field = confirm('Use "Posted" date?\n(OK = Posted date, Cancel = Added date)') ? 'posted_at' : 'discovered_at'
+                  const res = await api.skipOlderThan(days, field)
+                  alert(`Skipped ${res.skipped} unrated jobs older than ${days} days (by ${field === 'posted_at' ? 'posted' : 'added'} date).`)
+                  setSelected(null)
+                  setMatchResult(null)
+                  load()
+                }}
+                className="text-xs text-warning/50 hover:text-warning transition-all duration-150 btn-press whitespace-nowrap"
+              >
+                Skip old
+              </button>
+            )}
+            {filter === 'skipped' && (
+              <button
+                onClick={async () => {
+                  const input = prompt('Unskip unrated jobs skipped within the last how many days?', '7')
+                  if (input === null) return
+                  const days = parseInt(input, 10)
+                  if (!days || days < 1) return alert('Enter a positive number of days.')
+                  const res = await api.unskipUnrated(days)
+                  alert(`Restored ${res.unskipped} unrated jobs to pending.`)
+                  setSelected(null)
+                  load()
+                }}
+                className="text-xs text-accent/70 hover:text-accent transition-all duration-150 btn-press whitespace-nowrap"
+              >
+                Unskip unrated
+              </button>
+            )}
+            {filter === 'pending' && jobs.length > 0 && (
+              <button
                 onClick={handleClearQueue}
                 className="text-xs text-danger/60 hover:text-danger transition-all duration-150 btn-press whitespace-nowrap"
               >
