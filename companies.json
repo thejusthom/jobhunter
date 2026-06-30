@@ -130,7 +130,8 @@
   {
     "name": "Mixpanel",
     "ats": "greenhouse",
-    "slug": "mixpanel"
+    "slug": "mixpanel",
+    "linkedin_id": "423483"
   },
   {
     "name": "Brex",
@@ -254,7 +255,8 @@
   {
     "name": "Samsara",
     "ats": "greenhouse",
-    "slug": "samsara"
+    "slug": "samsara",
+    "linkedin_id": "6453825"
   },
   {
     "name": "Verkada",
