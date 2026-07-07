@@ -18,6 +18,67 @@ def _log(msg: str):
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] {msg}")
 
+
+def _extract_job_id(ats: str, apply_link: str) -> str | None:
+    """Extract a human-readable posting ID from the apply_link URL."""
+    if not apply_link:
+        return None
+    try:
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(apply_link)
+        params = parse_qs(parsed.query)
+        path = parsed.path.rstrip("/")
+        segments = [s for s in path.split("/") if s]
+        last = segments[-1] if segments else ""
+
+        if ats == "greenhouse":
+            gh_jid = params.get("gh_jid", [None])[0]
+            if gh_jid:
+                return gh_jid
+            try:
+                idx = segments.index("jobs")
+                if idx + 1 < len(segments):
+                    return segments[idx + 1]
+            except ValueError:
+                pass
+            return last or None
+
+        if ats in ("lever", "ashby"):
+            return last if len(last) > 8 else None
+
+        if ats in ("linkedin", "other"):
+            try:
+                idx = segments.index("view")
+                if idx + 1 < len(segments):
+                    return segments[idx + 1]
+            except ValueError:
+                pass
+            return last if last.isdigit() else None
+
+        if ats == "amazon":
+            try:
+                idx = segments.index("jobs")
+                if idx + 1 < len(segments):
+                    return segments[idx + 1]
+            except ValueError:
+                pass
+
+        if ats == "apple":
+            try:
+                idx = segments.index("details")
+                if idx + 1 < len(segments):
+                    return segments[idx + 1]
+            except ValueError:
+                pass
+
+        if ats == "workday":
+            underscore_idx = last.rfind("_")
+            return last[underscore_idx + 1:] if underscore_idx != -1 else last
+
+        return last or None
+    except Exception:
+        return None
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -2485,9 +2546,11 @@ def generate_outreach(job_id: str, req: OutreachRequest = None):
     if not job:
         raise HTTPException(404, "Job not found")
 
-    # Return cached outreach if available and no custom context provided
+    # Return cached outreach if available and no custom context provided.
+    # Skip cache if a job ID is extractable (older cached messages won't include it).
     has_custom = req and (req.recruiter_name or req.linkedin_post)
-    if not has_custom and job.get("outreach_full") and job.get("outreach_short") and job.get("outreach_short_hm"):
+    _cached_job_id = _extract_job_id(job.get("ats", ""), job.get("apply_link", ""))
+    if not has_custom and not _cached_job_id and job.get("outreach_full") and job.get("outreach_short") and job.get("outreach_short_hm"):
         return {
             "full": job["outreach_full"],
             "short": job["outreach_short"],
@@ -2505,12 +2568,16 @@ def generate_outreach(job_id: str, req: OutreachRequest = None):
     company = job.get("company", "")
     team = job.get("team", "")
     match_summary = job.get("match_summary", "")
+    ext_job_id = _extract_job_id(job.get("ats", ""), job.get("apply_link", ""))
 
     if not jd:
         raise HTTPException(400, "No job description available")
 
     recruiter_name = (req.recruiter_name or "").strip() if req else ""
     linkedin_post = (req.linkedin_post or "").strip() if req else ""
+
+    # Build role reference string — include job ID when available
+    role_ref = f"the {title} role (Job ID: {ext_job_id})" if ext_job_id else f"the {title} role"
 
     system_prompt = (
         "You generate LinkedIn outreach messages for a job applicant.\n\n"
@@ -2522,15 +2589,15 @@ def generate_outreach(job_id: str, req: OutreachRequest = None):
         "- Built full stack apps, AI pipelines, distributed systems\n\n"
         "STRICT RULES:\n"
         "1. Generate THREE versions:\n"
-        "   a) FULL: A detailed recruiter message (150-250 words)\n"
+        f"   a) FULL: A detailed recruiter message (150-250 words). When mentioning the role you applied for, always use: '{role_ref}'.\n"
         "   b) SHORT (for recruiters): Under 260 chars. Focus on YOU as a candidate, your fit, your background, offer to share resume.\n"
         "   c) SHORT_HM (for engineering leaders/people at the company): Under 260 chars. You DON'T know if this person is the hiring manager or even on the same team. Be open-ended and curious, NOT assumptive.\n\n"
-        "2. SHORT (recruiter) OPENING (follow EXACTLY):\n"
-        "   With recruiter name: 'Hey [Name]! Wanted to put a face to my resume! I applied for the [role] role.'\n"
-        "   Without recruiter name: 'Hey! Wanted to put a face to my resume! I applied for the [role] role.'\n"
-        "3. SHORT_HM (leader/engineer) RULES:\n"
-        "   With name: 'Hey [Name]! I applied for the [role] role at [company].'\n"
-        "   Without name: 'Hey! I applied for the [role] role at [company].'\n"
+        f"2. SHORT (recruiter) OPENING (follow EXACTLY, use the role reference verbatim):\n"
+        f"   With recruiter name: 'Hey [Name]! Wanted to put a face to my resume! I applied for {role_ref}.'\n"
+        f"   Without recruiter name: 'Hey! Wanted to put a face to my resume! I applied for {role_ref}.'\n"
+        f"3. SHORT_HM (leader/engineer) RULES:\n"
+        f"   With name: 'Hey [Name]! I applied for {role_ref} at {company}.'\n"
+        f"   Without name: 'Hey! I applied for {role_ref} at {company}.'\n"
         "   CRITICAL RULES for SHORT_HM:\n"
         "   - Do NOT say 'on your team' — you don't know if it's their team\n"
         "   - Do NOT ask about specific frameworks or tech stack details — it sounds robotic\n"
@@ -2565,6 +2632,8 @@ def generate_outreach(job_id: str, req: OutreachRequest = None):
         f"JOB TITLE: {title}",
         f"COMPANY: {company}",
     ]
+    if ext_job_id:
+        user_parts.append(f"JOB ID: {ext_job_id}")
     if team:
         user_parts.append(f"TEAM: {team}")
     if match_summary:

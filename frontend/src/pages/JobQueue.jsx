@@ -52,6 +52,47 @@ const _badgeStyle = (colorObj) => colorObj ? {
 
 const PAGE_SIZE = 25
 
+function extractJobId(ats, applyLink) {
+  if (!applyLink) return null
+  try {
+    const url = new URL(applyLink)
+    const path = url.pathname.replace(/\/$/, '')
+    const segments = path.split('/').filter(Boolean)
+    const last = segments[segments.length - 1] || ''
+
+    if (ats === 'greenhouse') {
+      const ghJid = url.searchParams.get('gh_jid')
+      if (ghJid) return ghJid
+      const jobsIdx = segments.indexOf('jobs')
+      if (jobsIdx !== -1 && segments[jobsIdx + 1]) return segments[jobsIdx + 1]
+      return last
+    }
+    if (ats === 'lever' || ats === 'ashby') {
+      return last.length > 8 ? last : null
+    }
+    if (ats === 'linkedin' || ats === 'other') {
+      const viewIdx = segments.indexOf('view')
+      if (viewIdx !== -1 && segments[viewIdx + 1]) return segments[viewIdx + 1]
+      return /^\d+$/.test(last) ? last : null
+    }
+    if (ats === 'amazon') {
+      const jobsIdx = segments.indexOf('jobs')
+      if (jobsIdx !== -1 && segments[jobsIdx + 1]) return segments[jobsIdx + 1]
+    }
+    if (ats === 'apple') {
+      const detailsIdx = segments.indexOf('details')
+      if (detailsIdx !== -1 && segments[detailsIdx + 1]) return segments[detailsIdx + 1]
+    }
+    if (ats === 'workday') {
+      const underscoreIdx = last.lastIndexOf('_')
+      return underscoreIdx !== -1 ? last.slice(underscoreIdx + 1) : last
+    }
+    return last || null
+  } catch {
+    return null
+  }
+}
+
 function timeAgo(dateStr) {
   if (!dateStr) return ''
   const diff = Date.now() - new Date(dateStr).getTime()
@@ -891,7 +932,21 @@ export default function JobQueue() {
                   <span className="text-sm font-medium">Back to jobs</span>
                 </button>
                 <div className="min-w-0">
-                  <h2 className="text-text-primary font-semibold text-base sm:text-lg leading-tight">{selected.title}</h2>
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <h2 className="text-text-primary font-semibold text-base sm:text-lg leading-tight">{selected.title}</h2>
+                    {(() => {
+                      const jid = extractJobId(selected.ats, selected.apply_link)
+                      return jid ? (
+                        <button
+                          onClick={() => handleCopy(jid, 'jobid')}
+                          className="text-xs text-text-muted hover:text-text-tertiary transition-colors shrink-0"
+                          title="Click to copy job ID"
+                        >
+                          {copied === 'jobid' ? '✓ Copied' : `#${jid}`}
+                        </button>
+                      ) : null
+                    })()}
+                  </div>
                   <div className="flex items-center gap-2 mt-1 flex-wrap">
                     <p className="text-text-tertiary text-sm">{selected.company} · {selected.location}</p>
                     <LinkedInIdEditor company={selected.company} compact />
