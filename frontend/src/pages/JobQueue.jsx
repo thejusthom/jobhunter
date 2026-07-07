@@ -78,6 +78,11 @@ export default function JobQueue() {
   const [addUrl, setAddUrl] = useState('')
   const [addingUrl, setAddingUrl] = useState(false)
   const [followUp, setFollowUp] = useState(null)
+  const [confirmModal, setConfirmModal] = useState(null) // { message, confirmLabel, danger, onConfirm }
+  const [skipOldModal, setSkipOldModal] = useState(false)
+  const [skipOldForm, setSkipOldForm] = useState({ days: '7', dateField: 'discovered_at', includeRated: false })
+  const [unskipModal, setUnskipModal] = useState(false)
+  const [unskipDays, setUnskipDays] = useState('7')
   const [undoToast, setUndoToast] = useState(null) // { label, appId, recruiterId, jobId, timerId }
 
   const showUndoToast = (label, appId, recruiterId, jobId) => {
@@ -463,12 +468,18 @@ export default function JobQueue() {
     setTimeout(() => setCopied(null), 2000)
   }
 
-  const handleClearQueue = async () => {
-    if (!confirm('Skip all pending jobs in the queue?')) return
-    await api.clearQueue()
-    setSelected(null)
-    setMatchResult(null)
-    load()
+  const handleClearQueue = () => {
+    setConfirmModal({
+      message: 'Skip all pending jobs in the queue?',
+      confirmLabel: 'Clear queue',
+      danger: true,
+      onConfirm: async () => {
+        await api.clearQueue()
+        setSelected(null)
+        setMatchResult(null)
+        load()
+      },
+    })
   }
 
   const [batchMatching, setBatchMatching] = useState(false)
@@ -501,15 +512,20 @@ export default function JobQueue() {
   const handleMatchAll = async () => {
     const { ids } = await api.getUnmatchedIds()
     if (ids.length === 0) return alert('All pending jobs are already matched')
-    if (!confirm(`Run AI match + outreach on ${ids.length} unmatched jobs across all pages?`)) return
-    try {
-      const res = await api.matchAll()
-      setBatchProgress({ done: 0, total: res.total || ids.length })
-      setBatchMatching(true) // triggers the polling effect above
-    } catch (e) {
-      if (String(e.message).toLowerCase().includes('already running')) setBatchMatching(true)
-      else alert(e.message)
-    }
+    setConfirmModal({
+      message: `Run AI match + outreach on ${ids.length} unmatched jobs across all pages?`,
+      confirmLabel: 'Run match',
+      onConfirm: async () => {
+        try {
+          const res = await api.matchAll()
+          setBatchProgress({ done: 0, total: res.total || ids.length })
+          setBatchMatching(true) // triggers the polling effect above
+        } catch (e) {
+          if (String(e.message).toLowerCase().includes('already running')) setBatchMatching(true)
+          else alert(e.message)
+        }
+      },
+    })
   }
 
   const closeDetail = () => {
@@ -540,13 +556,19 @@ export default function JobQueue() {
             )}
             {filter === 'pending' && jobs.length > 0 && (
               <button
-                onClick={async () => {
-                  if (!confirm('Skip all matched jobs with score below 60?')) return
-                  const res = await api.skipLowScores(60)
-                  alert(`Skipped ${res.skipped} jobs below 60%`)
-                  setSelected(null)
-                  setMatchResult(null)
-                  load()
+                onClick={() => {
+                  setConfirmModal({
+                    message: 'Skip all matched jobs with score below 60?',
+                    confirmLabel: 'Skip',
+                    danger: true,
+                    onConfirm: async () => {
+                      const res = await api.skipLowScores(60)
+                      alert(`Skipped ${res.skipped} jobs below 60%`)
+                      setSelected(null)
+                      setMatchResult(null)
+                      load()
+                    },
+                  })
                 }}
                 className="text-xs text-warning/70 hover:text-warning transition-all duration-150 btn-press whitespace-nowrap"
               >
@@ -555,18 +577,7 @@ export default function JobQueue() {
             )}
             {filter === 'pending' && jobs.length > 0 && (
               <button
-                onClick={async () => {
-                  const input = prompt('Skip unrated pending jobs older than how many days?\n(uses "Added" date)', '7')
-                  if (input === null) return
-                  const days = parseInt(input, 10)
-                  if (!days || days < 1) return alert('Enter a positive number of days.')
-                  const field = confirm('Use "Posted" date?\n(OK = Posted date, Cancel = Added date)') ? 'posted_at' : 'discovered_at'
-                  const res = await api.skipOlderThan(days, field)
-                  alert(`Skipped ${res.skipped} unrated jobs older than ${days} days (by ${field === 'posted_at' ? 'posted' : 'added'} date).`)
-                  setSelected(null)
-                  setMatchResult(null)
-                  load()
-                }}
+                onClick={() => { setSkipOldForm({ days: '7', dateField: 'discovered_at', includeRated: false }); setSkipOldModal(true) }}
                 className="text-xs text-warning/50 hover:text-warning transition-all duration-150 btn-press whitespace-nowrap"
               >
                 Skip old
@@ -574,16 +585,7 @@ export default function JobQueue() {
             )}
             {filter === 'skipped' && (
               <button
-                onClick={async () => {
-                  const input = prompt('Unskip unrated jobs skipped within the last how many days?', '7')
-                  if (input === null) return
-                  const days = parseInt(input, 10)
-                  if (!days || days < 1) return alert('Enter a positive number of days.')
-                  const res = await api.unskipUnrated(days)
-                  alert(`Restored ${res.unskipped} unrated jobs to pending.`)
-                  setSelected(null)
-                  load()
-                }}
+                onClick={() => { setUnskipDays('7'); setUnskipModal(true) }}
                 className="text-xs text-accent/70 hover:text-accent transition-all duration-150 btn-press whitespace-nowrap"
               >
                 Unskip unrated
@@ -1407,6 +1409,101 @@ export default function JobQueue() {
                   Block {followUp.company} — skip all roles
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Generic confirm modal */}
+      {confirmModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-surface-raised border border-border rounded-xl p-6 w-full max-w-sm mx-4 shadow-xl">
+            <p className="text-text-primary text-sm mb-5">{confirmModal.message}</p>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setConfirmModal(null)} className="px-4 py-2 text-sm text-text-secondary hover:text-text-primary border border-border rounded-lg transition-colors">Cancel</button>
+              <button
+                onClick={async () => { setConfirmModal(null); await confirmModal.onConfirm() }}
+                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${confirmModal.danger ? 'bg-danger/80 hover:bg-danger text-white' : 'bg-accent hover:bg-accent-hover text-white'}`}
+              >
+                {confirmModal.confirmLabel || 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Skip old modal */}
+      {skipOldModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-surface-raised border border-border rounded-xl p-6 w-full max-w-sm mx-4 shadow-xl">
+            <h3 className="text-text-primary font-semibold mb-4">Skip old pending jobs</h3>
+            <div className="space-y-3 mb-5">
+              <div className="flex items-center gap-3">
+                <label className="text-sm text-text-secondary w-24 shrink-0">Older than</label>
+                <input type="number" min="1" value={skipOldForm.days} onChange={e => setSkipOldForm(f => ({ ...f, days: e.target.value }))}
+                  className="bg-surface border border-border rounded-lg text-sm text-text-primary px-3 py-1.5 w-20 outline-none focus:border-accent" />
+                <span className="text-sm text-text-tertiary">days</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <label className="text-sm text-text-secondary w-24 shrink-0">Date field</label>
+                <select value={skipOldForm.dateField} onChange={e => setSkipOldForm(f => ({ ...f, dateField: e.target.value }))}
+                  className="bg-surface border border-border rounded-lg text-sm text-text-primary px-3 py-1.5 outline-none focus:border-accent cursor-pointer">
+                  <option value="discovered_at">Added date</option>
+                  <option value="posted_at">Posted date</option>
+                </select>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input type="checkbox" checked={skipOldForm.includeRated} onChange={e => setSkipOldForm(f => ({ ...f, includeRated: e.target.checked }))}
+                  className="accent-accent w-4 h-4" />
+                <span className="text-sm text-text-secondary">Include already-rated jobs</span>
+              </label>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setSkipOldModal(false)} className="px-4 py-2 text-sm text-text-secondary hover:text-text-primary border border-border rounded-lg transition-colors">Cancel</button>
+              <button
+                onClick={async () => {
+                  const days = parseInt(skipOldForm.days, 10)
+                  if (!days || days < 1) return
+                  setSkipOldModal(false)
+                  const res = await api.skipOlderThan(days, skipOldForm.dateField, skipOldForm.includeRated)
+                  alert(`Skipped ${res.skipped} jobs older than ${days} days.`)
+                  setSelected(null); setMatchResult(null); load()
+                }}
+                className="px-4 py-2 text-sm font-medium bg-danger/80 hover:bg-danger text-white rounded-lg transition-colors"
+              >
+                Skip jobs
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Unskip modal */}
+      {unskipModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-surface-raised border border-border rounded-xl p-6 w-full max-w-sm mx-4 shadow-xl">
+            <h3 className="text-text-primary font-semibold mb-4">Unskip unrated jobs</h3>
+            <div className="flex items-center gap-3 mb-5">
+              <label className="text-sm text-text-secondary">Skipped within last</label>
+              <input type="number" min="1" value={unskipDays} onChange={e => setUnskipDays(e.target.value)}
+                className="bg-surface border border-border rounded-lg text-sm text-text-primary px-3 py-1.5 w-20 outline-none focus:border-accent" />
+              <span className="text-sm text-text-tertiary">days</span>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setUnskipModal(false)} className="px-4 py-2 text-sm text-text-secondary hover:text-text-primary border border-border rounded-lg transition-colors">Cancel</button>
+              <button
+                onClick={async () => {
+                  const days = parseInt(unskipDays, 10)
+                  if (!days || days < 1) return
+                  setUnskipModal(false)
+                  const res = await api.unskipUnrated(days)
+                  alert(`Restored ${res.unskipped} unrated jobs to pending.`)
+                  setSelected(null); load()
+                }}
+                className="px-4 py-2 text-sm font-medium bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors"
+              >
+                Unskip
+              </button>
             </div>
           </div>
         </div>
