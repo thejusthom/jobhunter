@@ -83,6 +83,8 @@ export default function JobQueue() {
   const [skipOldForm, setSkipOldForm] = useState({ days: '7', dateField: 'discovered_at', includeRated: false })
   const [unskipModal, setUnskipModal] = useState(false)
   const [unskipDays, setUnskipDays] = useState('7')
+  const [sourceFilter, setSourceFilter] = useState('')
+  const [h1bOnly, setH1bOnly] = useState(false)
   const [undoToast, setUndoToast] = useState(null) // { label, appId, recruiterId, jobId, timerId }
 
   const showUndoToast = (label, appId, recruiterId, jobId) => {
@@ -119,6 +121,8 @@ export default function JobQueue() {
     if (filter) params.status = filter
     if (searchDebounced.trim()) params.search = searchDebounced.trim()
     if (sort) params.sort = sort
+    if (sourceFilter) params.source = sourceFilter
+    if (h1bOnly) params.has_sponsor = true
     api.getJobs(params).then(data => {
       setJobs(data.jobs || [])
       setTotal(data.total || 0)
@@ -129,7 +133,7 @@ export default function JobQueue() {
         })
       }
     }).finally(() => setLoading(false))
-  }, [filter, page, searchDebounced, sort])
+  }, [filter, page, searchDebounced, sort, sourceFilter, h1bOnly])
 
   useEffect(() => { load() }, [load])
 
@@ -641,38 +645,64 @@ export default function JobQueue() {
         </div>
 
         {/* Filter tabs + Sort */}
-        <div className="flex items-center gap-2 mb-3 animate-fade-in-up" style={{ animationDelay: '50ms' }}>
-          <div className="flex gap-1 bg-surface rounded-lg p-1 border border-border flex-1">
-            {['pending', 'applied', 'skipped', ''].map(s => (
-              <button
-                key={s}
-                onClick={() => changeFilter(s)}
-                className={`text-xs px-3 py-1.5 rounded-md flex-1 transition-all duration-200 btn-press ${
-                  filter === s
-                    ? 'bg-accent/15 text-accent font-medium shadow-sm'
-                    : 'text-text-muted hover:text-text-secondary'
-                }`}
-              >
-                {s || 'All'}
-              </button>
-            ))}
+        <div className="flex flex-col gap-1.5 mb-3 animate-fade-in-up" style={{ animationDelay: '50ms' }}>
+          <div className="flex items-center gap-2">
+            <div className="flex gap-1 bg-surface rounded-lg p-1 border border-border flex-1">
+              {['pending', 'applied', 'skipped', ''].map(s => (
+                <button
+                  key={s}
+                  onClick={() => changeFilter(s)}
+                  className={`text-xs px-3 py-1.5 rounded-md flex-1 transition-all duration-200 btn-press ${
+                    filter === s
+                      ? 'bg-accent/15 text-accent font-medium shadow-sm'
+                      : 'text-text-muted hover:text-text-secondary'
+                  }`}
+                >
+                  {s || 'All'}
+                </button>
+              ))}
+            </div>
+            <select
+              value={sort}
+              onChange={e => { setSort(e.target.value); setPage(0) }}
+              className="bg-surface border border-border rounded-lg text-xs text-text-muted px-2 py-[7px] outline-none cursor-pointer hover:text-text-secondary hover:border-border-hover focus:border-accent/40 transition-all duration-200 shrink-0"
+            >
+              <option value="posted_newest">Posted ↓</option>
+              <option value="posted_oldest">Posted ↑</option>
+              <option value="newest">Added ↓</option>
+              <option value="oldest">Added ↑</option>
+              <option value="match_desc">Match ↓</option>
+              <option value="match_asc">Match ↑</option>
+              <option value="company_asc">Company A-Z</option>
+              <option value="company_desc">Company Z-A</option>
+              <option value="salary_desc">Salary ↓</option>
+              <option value="title_asc">Title A-Z</option>
+            </select>
           </div>
-          <select
-            value={sort}
-            onChange={e => { setSort(e.target.value); setPage(0) }}
-            className="bg-surface border border-border rounded-lg text-xs text-text-muted px-2 py-[7px] outline-none cursor-pointer hover:text-text-secondary hover:border-border-hover focus:border-accent/40 transition-all duration-200 shrink-0"
-          >
-            <option value="posted_newest">Posted ↓</option>
-            <option value="posted_oldest">Posted ↑</option>
-            <option value="newest">Added ↓</option>
-            <option value="oldest">Added ↑</option>
-            <option value="match_desc">Match ↓</option>
-            <option value="match_asc">Match ↑</option>
-            <option value="company_asc">Company A-Z</option>
-            <option value="company_desc">Company Z-A</option>
-            <option value="salary_desc">Salary ↓</option>
-            <option value="title_asc">Title A-Z</option>
-          </select>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { setH1bOnly(v => !v); setPage(0) }}
+              className={`text-xs px-2.5 py-1 rounded-md border transition-all duration-150 shrink-0 ${h1bOnly ? 'bg-emerald-900/30 text-emerald-400 border-emerald-500/30' : 'text-text-muted border-border hover:text-text-secondary'}`}
+            >
+              H-1B
+            </button>
+            <select
+              value={sourceFilter}
+              onChange={e => { setSourceFilter(e.target.value); setPage(0) }}
+              className="bg-surface border border-border rounded-lg text-xs text-text-muted px-2 py-[7px] outline-none cursor-pointer hover:text-text-secondary hover:border-border-hover focus:border-accent/40 transition-all duration-200 flex-1"
+            >
+              <option value="">All sources</option>
+              <option value="jsearch">JSearch</option>
+              <option value="adzuna">Adzuna</option>
+              <option value="simplify">Simplify</option>
+              <option value="greenhouse">Greenhouse</option>
+              <option value="lever">Lever</option>
+              <option value="ashby">Ashby</option>
+              <option value="workday">Workday</option>
+              <option value="amazon">Amazon</option>
+              <option value="sponsor">H-1B Sponsor</option>
+            </select>
+          </div>
         </div>
 
         {/* Search */}

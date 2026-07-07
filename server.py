@@ -294,10 +294,20 @@ def list_jobs(
     offset: int = 0,
     search: str | None = None,
     sort: str | None = None,
+    source: str | None = None,
+    has_sponsor: bool = False,
 ):
-    jobs = db.get_jobs(status=status, min_score=min_score, limit=limit, offset=offset, search=search, sort=sort)
-    jobs = [_attach_sponsor(_parse_json_fields(j)) for j in jobs]
-    total = db.count_jobs(status=status, min_score=min_score, search=search)
+    if has_sponsor:
+        # Post-filter using the proper sponsor lookup (normalization is too complex for SQL)
+        all_jobs = db.get_all_jobs_for_filter(status=status, min_score=min_score, search=search, source=source, sort=sort)
+        all_jobs = [_attach_sponsor(_parse_json_fields(j)) for j in all_jobs]
+        all_jobs = [j for j in all_jobs if j.get("h1b_sponsor")]
+        total = len(all_jobs)
+        jobs = all_jobs[offset: offset + limit]
+    else:
+        jobs = db.get_jobs(status=status, min_score=min_score, limit=limit, offset=offset, search=search, sort=sort, source=source)
+        jobs = [_attach_sponsor(_parse_json_fields(j)) for j in jobs]
+        total = db.count_jobs(status=status, min_score=min_score, search=search, source=source)
     return {"jobs": jobs, "total": total, "limit": limit, "offset": offset}
 
 @app.get("/api/jobs/stats")

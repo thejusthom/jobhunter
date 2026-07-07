@@ -316,7 +316,7 @@ SORT_OPTIONS = {
 }
 
 
-def get_jobs(status=None, min_score=None, limit=100, offset=0, search=None, sort=None):
+def get_jobs(status=None, min_score=None, limit=100, offset=0, search=None, sort=None, source=None):
     clauses, params = [], []
     if status:
         clauses.append("status = ?")
@@ -328,6 +328,9 @@ def get_jobs(status=None, min_score=None, limit=100, offset=0, search=None, sort
         clauses.append("(title LIKE ? OR company LIKE ?)")
         like = f"%{search}%"
         params.extend([like] * 2)
+    if source:
+        clauses.append("source = ?")
+        params.append(source)
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
     order = SORT_OPTIONS.get(sort, "acted_at DESC NULLS LAST, discovered_at DESC, match_pct DESC")
     params.extend([limit, offset])
@@ -574,7 +577,7 @@ def cleanup_irrelevant_jobs() -> int:
         return len(to_delete)
 
 
-def count_jobs(status=None, min_score=None, search=None):
+def count_jobs(status=None, min_score=None, search=None, source=None):
     clauses, params = [], []
     if status:
         clauses.append("status = ?")
@@ -586,10 +589,36 @@ def count_jobs(status=None, min_score=None, search=None):
         clauses.append("(title LIKE ? OR company LIKE ?)")
         like = f"%{search}%"
         params.extend([like] * 2)
+    if source:
+        clauses.append("source = ?")
+        params.append(source)
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
     with get_db() as db:
         row = db.execute(f"SELECT COUNT(*) as count FROM jobs {where}", params).fetchone()
         return row["count"]
+
+
+def get_all_jobs_for_filter(status=None, min_score=None, search=None, source=None, sort=None):
+    """Fetch all matching jobs (no pagination) for server-side post-filtering."""
+    clauses, params = [], []
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if min_score is not None:
+        clauses.append("match_pct >= ?")
+        params.append(min_score)
+    if search:
+        clauses.append("(title LIKE ? OR company LIKE ?)")
+        like = f"%{search}%"
+        params.extend([like] * 2)
+    if source:
+        clauses.append("source = ?")
+        params.append(source)
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    order = SORT_OPTIONS.get(sort, "acted_at DESC NULLS LAST, discovered_at DESC, match_pct DESC")
+    with get_db() as db:
+        rows = db.execute(f"SELECT * FROM jobs {where} ORDER BY {order}", params).fetchall()
+        return [dict(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------
