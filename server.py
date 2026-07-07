@@ -1799,11 +1799,7 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
                         continue
                     if db.is_company_blocked(job.get("employer_name", "")):
                         continue
-                    sc = score_job(job)
-                    # Simplify listings have no description, so score is title-only — use lower threshold
-                    if sc < 25:
-                        continue
-
+                    # Simplify pre-filters by SWE category — skip score_job (no description to score on)
                     entry = {
                         "id": jid,
                         "title": job.get("job_title"),
@@ -1811,7 +1807,7 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
                         "location": job.get("job_city", ""),
                         "apply_link": job.get("job_apply_link"),
                         "ats": "simplify",
-                        "score": sc,
+                        "score": 50.0,
                         "description": job.get("job_description", ""),
                         "posted_at": job.get("job_posted_at_datetime_utc", ""),
                         "discovered_at": datetime.now(timezone.utc).isoformat(),
@@ -1826,9 +1822,10 @@ def _run_discovery(queries: list[str], location: str, skip_jsearch: bool, skip_a
         # Auto-fetch descriptions for jobs that have apply_link but no description
         _phase("Fetching missing descriptions...")
         try:
-            no_desc_jobs = db.get_db().execute(
-                "SELECT id, apply_link FROM jobs WHERE (description IS NULL OR description = '') AND apply_link != '' AND status = 'pending' LIMIT 50"
-            ).fetchall()
+            with db.get_db() as conn:
+                no_desc_jobs = conn.execute(
+                    "SELECT id, apply_link FROM jobs WHERE (description IS NULL OR description = '') AND apply_link != '' AND status = 'pending' LIMIT 50"
+                ).fetchall()
             for nj in no_desc_jobs:
                 try:
                     fetched = _fetch_jd_from_url(nj["apply_link"])
