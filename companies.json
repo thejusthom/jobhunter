@@ -679,7 +679,8 @@
   {
     "name": "Snowflake",
     "ats": "ashby",
-    "slug": "snowflake"
+    "slug": "snowflake",
+    "linkedin_id": "3653845"
   },
   {
     "name": "Deel",
@@ -704,7 +705,8 @@
   {
     "name": "Benchling",
     "ats": "ashby",
-    "slug": "benchling"
+    "slug": "benchling",
+    "linkedin_id": "3769390"
   },
   {
     "name": "Lambda",
@@ -924,7 +926,8 @@
   {
     "name": "AppLovin",
     "ats": "greenhouse",
-    "slug": "applovin"
+    "slug": "applovin",
+    "linkedin_id": "3076102"
   },
   {
     "name": "TCS",
