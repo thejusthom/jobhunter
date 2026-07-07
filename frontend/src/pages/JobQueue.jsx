@@ -78,6 +78,22 @@ export default function JobQueue() {
   const [addUrl, setAddUrl] = useState('')
   const [addingUrl, setAddingUrl] = useState(false)
   const [followUp, setFollowUp] = useState(null)
+  const [undoToast, setUndoToast] = useState(null) // { label, appId, recruiterId, jobId, timerId }
+
+  const showUndoToast = (label, appId, recruiterId, jobId) => {
+    setUndoToast(prev => { if (prev?.timerId) clearTimeout(prev.timerId); return null })
+    const timerId = setTimeout(() => setUndoToast(null), 6000)
+    setUndoToast({ label, appId, recruiterId, jobId, timerId })
+  }
+
+  const handleUndo = async () => {
+    if (!undoToast) return
+    clearTimeout(undoToast.timerId)
+    setUndoToast(null)
+    if (undoToast.appId) await api.deleteApplication(undoToast.appId)
+    if (undoToast.recruiterId) await api.deleteRecruiter(undoToast.recruiterId)
+    load(true)
+  }
   const [search, setSearch] = useState('')
   const [searchDebounced, setSearchDebounced] = useState('')
   const listRef = useRef(null)
@@ -224,9 +240,12 @@ export default function JobQueue() {
     const target = job || followUp
     if (!target) return
 
+    let appId = null
+    let recruiterId = null
+
     if (applied) {
       await api.updateJob(target.id, { status: 'applied' })
-      await api.createApplication({
+      const appRes = await api.createApplication({
         job_id: target.id,
         title: target.title,
         company: target.company,
@@ -236,16 +255,21 @@ export default function JobQueue() {
         resume_used: matchResult?.recommended_resume || selected?.recommended_resume || '',
         email_used: emailUsed,
       })
+      appId = appRes?.id ?? null
     }
 
     if (contactedRecruiter) {
-      await api.createRecruiter({
+      const recRes = await api.createRecruiter({
         name: '',
         company: target.company,
         application_id: null,
         notes: `Contacted via LinkedIn for ${target.title}`,
       })
+      recruiterId = recRes?.id ?? null
     }
+
+    const toastLabel = applied && contactedRecruiter ? 'Applied + recruiter' : applied ? 'Applied' : '+Recruiter'
+    showUndoToast(toastLabel, appId, recruiterId, target.id)
 
     setFollowUp(null)
     if (selected?.id === target.id) {
@@ -1385,6 +1409,20 @@ export default function JobQueue() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Undo toast */}
+      {undoToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-surface-raised border border-border rounded-xl px-4 py-3 shadow-lg">
+          <span className="text-sm text-text-secondary">{undoToast.label} recorded</span>
+          <button
+            onClick={handleUndo}
+            className="text-sm font-medium text-accent hover:text-accent-hover transition-colors"
+          >
+            Undo
+          </button>
+          <button onClick={() => { clearTimeout(undoToast.timerId); setUndoToast(null) }} className="text-text-muted hover:text-text-tertiary text-xs">✕</button>
         </div>
       )}
     </div>

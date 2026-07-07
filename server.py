@@ -1130,6 +1130,29 @@ def update_application(app_id: int, body: ApplicationUpdate):
     return {"ok": True}
 
 
+@app.delete("/api/applications/{app_id}")
+def delete_application(app_id: int):
+    with db.get_db() as conn:
+        row = conn.execute("SELECT job_id FROM applications WHERE id = ?", (app_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Application not found")
+        job_id = row["job_id"]
+        conn.execute("DELETE FROM applications WHERE id = ?", (app_id,))
+        if job_id:
+            conn.execute("UPDATE jobs SET status = 'pending', acted_at = NULL WHERE id = ? AND status = 'applied'", (job_id,))
+    return {"ok": True}
+
+
+@app.delete("/api/recruiters/{recruiter_id}")
+def delete_recruiter(recruiter_id: int):
+    with db.get_db() as conn:
+        row = conn.execute("SELECT id FROM recruiters WHERE id = ?", (recruiter_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Recruiter not found")
+        conn.execute("DELETE FROM recruiters WHERE id = ?", (recruiter_id,))
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------------------
 # Recruiter endpoints
 # ---------------------------------------------------------------------------

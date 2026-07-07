@@ -36,9 +36,11 @@ export const api = {
   createApplication: (data) => request('/applications', { method: 'POST', body: JSON.stringify(data) }),
   addApplicationByUrl: (url) => request('/applications/add-by-url', { method: 'POST', body: JSON.stringify({ url }) }),
   updateApplication: (id, data) => request(`/applications/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteApplication: (id) => request(`/applications/${id}`, { method: 'DELETE' }),
 
   getRecruiters: (appId) => request(`/recruiters${appId ? '?application_id=' + appId : ''}`),
   createRecruiter: (data) => request('/recruiters', { method: 'POST', body: JSON.stringify(data) }),
+  deleteRecruiter: (id) => request(`/recruiters/${id}`, { method: 'DELETE' }),
 
   getReminders: (all) => request(`/reminders${all ? '?include_completed=true' : ''}`),
   getDueReminders: () => request('/reminders/due'),
