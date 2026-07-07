@@ -2734,20 +2734,25 @@ def unskip_unrated(days: int = 7):
 
 
 @app.post("/api/jobs/skip-older-than")
-def skip_older_than(days: int = 7, date_field: str = "discovered_at"):
-    """Skip pending unrated jobs whose posted_at or discovered_at is older than N days."""
+def skip_older_than(days: int = 7, date_field: str = "discovered_at", include_rated: bool = False):
+    """Skip pending jobs whose posted_at or discovered_at is older than N days.
+
+    By default only unrated jobs (match_pct IS NULL) are skipped; pass
+    include_rated=true to also skip pending jobs that already have a match score.
+    """
     if date_field not in ("posted_at", "discovered_at"):
         raise HTTPException(400, "date_field must be 'posted_at' or 'discovered_at'")
+    rated_clause = "" if include_rated else "AND match_pct IS NULL"
     with db.get_db() as conn:
         r = conn.execute(
             f"""UPDATE jobs SET status = 'skipped', acted_at = ?
                 WHERE status = 'pending'
-                  AND match_pct IS NULL
+                  {rated_clause}
                   AND {date_field} != ''
                   AND {date_field} < datetime('now', ? || ' days')""",
             (datetime.now(timezone.utc).isoformat(), f"-{days}"),
         )
-        return {"skipped": r.rowcount, "days": days, "date_field": date_field}
+        return {"skipped": r.rowcount, "days": days, "date_field": date_field, "include_rated": include_rated}
 
 
 @app.post("/api/jobs/clear-queue")

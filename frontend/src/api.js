@@ -79,7 +79,7 @@ export const api = {
   cleanupIrrelevant: () => request('/jobs/cleanup-irrelevant', { method: 'POST' }),
   skipLowScores: (threshold = 60) => request(`/jobs/skip-low-scores?threshold=${threshold}`, { method: 'POST' }),
   unskipUnrated: (days = 7) => request(`/jobs/unskip-unrated?days=${days}`, { method: 'POST' }),
-  skipOlderThan: (days = 7, dateField = 'discovered_at') => request(`/jobs/skip-older-than?days=${days}&date_field=${dateField}`, { method: 'POST' }),
+  skipOlderThan: (days = 7, dateField = 'discovered_at', includeRated = false) => request(`/jobs/skip-older-than?days=${days}&date_field=${dateField}&include_rated=${includeRated}`, { method: 'POST' }),
   getUnmatchedIds: () => request('/jobs/unmatched-ids'),
   matchAll: () => request('/jobs/match-all', { method: 'POST' }),
   getMatchStatus: () => request('/jobs/match-status'),
