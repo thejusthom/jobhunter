@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 
@@ -9,52 +9,70 @@ const FRESHNESS_OPTIONS = [
   { value: 168, label: '1 week' },
 ]
 
+const SOURCES = [
+  { key: 'jsearch',  label: 'JSearch' },
+  { key: 'adzuna',  label: 'Adzuna' },
+  { key: 'simplify', label: 'Simplify' },
+  { key: 'ats',      label: 'ATS Companies' },
+  { key: 'sponsors', label: 'H-1B Sponsors' },
+]
+
+const ALL_KEYS = SOURCES.map(s => s.key)
+
 export default function Dashboard() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [discovering, setDiscovering] = useState(false)
-  const [discoveryPhase, setDiscoveryPhase] = useState('')
   const [freshness, setFreshness] = useState(24)
+  const [selected, setSelected] = useState(new Set(ALL_KEYS))
+  const [sourceStatuses, setSourceStatuses] = useState({})
+  const pollRef = useRef(null)
 
-  const load = () => {
-    api.getDashboard().then(setData).finally(() => setLoading(false))
-  }
+  const load = () => api.getDashboard().then(setData).finally(() => setLoading(false))
 
   useEffect(() => { load() }, [])
 
-  const pollDiscovery = () => {
-    const poll = setInterval(async () => {
+  const anyRunning = Object.values(sourceStatuses).some(s => s.running)
+
+  const startPolling = () => {
+    if (pollRef.current) return
+    pollRef.current = setInterval(async () => {
       try {
-        const s = await api.getDiscoveryStatus()
-        setDiscoveryPhase(s.phase || 'Processing...')
-        if (!s.running) {
-          clearInterval(poll)
-          setDiscovering(false)
-          setDiscoveryPhase('')
+        const s = await api.getSourcesStatus()
+        setSourceStatuses(s)
+        if (!Object.values(s).some(v => v.running)) {
+          clearInterval(pollRef.current)
+          pollRef.current = null
           load()
         }
       } catch (_) { /* transient */ }
     }, 2000)
   }
 
-  // Restore an in-progress discovery after a page refresh (it runs server-side).
+  // Restore in-progress after refresh
   useEffect(() => {
-    api.getDiscoveryStatus().then(s => {
-      if (s.running) { setDiscovering(true); setDiscoveryPhase(s.phase || 'Processing...'); pollDiscovery() }
+    api.getSourcesStatus().then(s => {
+      setSourceStatuses(s)
+      if (Object.values(s).some(v => v.running)) startPolling()
     }).catch(() => {})
+    return () => { if (pollRef.current) clearInterval(pollRef.current) }
   }, [])
 
-  const runDiscovery = async ({ jsearch = true, ats = true, adzuna = true, simplify = true } = {}) => {
-    setDiscovering(true)
-    setDiscoveryPhase('Starting...')
-    try {
-      await api.triggerDiscovery({ skip_jsearch: !jsearch, skip_ats: !ats, skip_adzuna: !adzuna, skip_simplify: !simplify, freshness_hours: freshness })
-      pollDiscovery()
-    } catch (e) {
-      alert(e.message)
-      setDiscovering(false)
-      setDiscoveryPhase('')
-    }
+  const toggleSource = (key) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  }
+
+  const runDiscovery = async () => {
+    if (!selected.size) return
+    const params = { freshness_hours: freshness }
+    const toRun = [...selected]
+    await Promise.allSettled(toRun.map(src => api.triggerSourceDiscovery(src, params)))
+    const fresh = await api.getSourcesStatus()
+    setSourceStatuses(fresh)
+    startPolling()
   }
 
   if (loading) return <p className="text-text-muted animate-pulse">Loading dashboard...</p>
@@ -147,70 +165,64 @@ export default function Dashboard() {
         <div className="bg-surface-raised border border-border rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-text-primary font-semibold">Discovery</h3>
-          </div>
-          <div className="text-sm text-text-tertiary mb-4">
-            {discovering && discoveryPhase
-              ? <span className="text-accent animate-pulse">{discoveryPhase}</span>
-              : discovery.last_run
-                ? `Last run: ${new Date(discovery.last_run).toLocaleString()} (${discovery.new_jobs} new)`
-                : 'Never run'}
-          </div>
-
-          <div className="flex items-center gap-2 mb-4">
-            <span className="text-sm text-text-tertiary">Freshness:</span>
-            <select
-              value={freshness}
-              onChange={e => setFreshness(Number(e.target.value))}
-              className="bg-surface border border-border rounded-lg text-sm text-text-primary px-2.5 py-1.5 outline-none cursor-pointer"
-            >
-              {FRESHNESS_OPTIONS.map(o => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-text-tertiary">Freshness:</span>
+              <select
+                value={freshness}
+                onChange={e => setFreshness(Number(e.target.value))}
+                className="bg-surface border border-border rounded-lg text-sm text-text-primary px-2.5 py-1.5 outline-none cursor-pointer"
+              >
+                {FRESHNESS_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          <div className="flex gap-2 flex-wrap">
+          <div className="space-y-2 mb-4">
+            {SOURCES.map(({ key, label }) => {
+              const st = sourceStatuses[key] || {}
+              const isRunning = !!st.running
+              return (
+                <label key={key} className="flex items-center gap-3 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(key)}
+                    onChange={() => toggleSource(key)}
+                    disabled={isRunning}
+                    className="accent-accent w-4 h-4 cursor-pointer"
+                  />
+                  <span className="text-sm text-text-secondary group-hover:text-text-primary transition-colors select-none flex-1">{label}</span>
+                  {isRunning
+                    ? <span className="text-xs text-accent animate-pulse">{st.phase || 'Running...'}</span>
+                    : st.last_run
+                      ? <span className="text-xs text-text-muted">{st.new_jobs ?? 0} new · {new Date(st.last_run).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      : <span className="text-xs text-text-muted">never run</span>
+                  }
+                </label>
+              )
+            })}
+          </div>
+
+          <div className="flex items-center gap-3">
             <button
-              onClick={() => runDiscovery()}
-              disabled={discovering}
+              onClick={runDiscovery}
+              disabled={anyRunning || !selected.size}
               className="bg-accent hover:bg-accent-hover disabled:opacity-50 text-white font-medium text-sm px-4 py-2 rounded-lg transition-all duration-150"
             >
-              {discovering ? 'Running...' : 'Run All'}
+              {anyRunning ? 'Running...' : `Run${selected.size < ALL_KEYS.length ? ` (${selected.size})` : ' All'}`}
             </button>
             <button
-              onClick={() => runDiscovery({ jsearch: false, adzuna: false, simplify: false })}
-              disabled={discovering}
-              className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
+              onClick={() => setSelected(new Set(ALL_KEYS))}
+              className="text-xs text-text-muted hover:text-text-tertiary transition-colors"
             >
-              ATS Only
+              All
             </button>
             <button
-              onClick={() => runDiscovery({ ats: false, adzuna: false, simplify: false })}
-              disabled={discovering}
-              className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
+              onClick={() => setSelected(new Set())}
+              className="text-xs text-text-muted hover:text-text-tertiary transition-colors"
             >
-              JSearch Only
-            </button>
-            <button
-              onClick={() => runDiscovery({ jsearch: false, ats: false, simplify: false })}
-              disabled={discovering}
-              className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
-            >
-              Adzuna Only
-            </button>
-            <button
-              onClick={() => runDiscovery({ jsearch: false, ats: false, adzuna: false })}
-              disabled={discovering}
-              className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
-            >
-              Simplify Only
-            </button>
-            <button
-              onClick={() => runDiscovery({ jsearch: false, adzuna: false })}
-              disabled={discovering}
-              className="bg-surface-overlay hover:bg-border disabled:opacity-50 text-text-secondary text-sm px-4 py-2 rounded-lg transition-all duration-150 border border-border"
-            >
-              ATS + Simplify
+              None
             </button>
           </div>
         </div>

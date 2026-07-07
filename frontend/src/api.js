@@ -70,6 +70,8 @@ export const api = {
 
   getDashboard: () => request('/dashboard'),
   triggerDiscovery: (data = {}) => request('/discover', { method: 'POST', body: JSON.stringify(data) }),
+  triggerSourceDiscovery: (source, data = {}) => request(`/discover/source/${source}`, { method: 'POST', body: JSON.stringify(data) }),
+  getSourcesStatus: () => request('/discover/sources-status'),
   getDiscoveryStatus: () => request('/discover/status'),
   getActivity: () => request('/activity'),
 

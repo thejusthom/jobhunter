@@ -1885,6 +1885,309 @@ def trigger_discovery(body: DiscoverRequest, background_tasks: BackgroundTasks):
 def get_discovery_status():
     return discovery_status
 
+
+# ---------------------------------------------------------------------------
+# Per-source discovery endpoints (run independently / in parallel)
+# ---------------------------------------------------------------------------
+
+_source_statuses: dict[str, dict] = {
+    s: {"running": False, "phase": "", "last_run": None, "new_jobs": 0}
+    for s in ("jsearch", "adzuna", "ats", "sponsors", "simplify")
+}
+
+
+def _run_source_jsearch(queries, location, freshness_hours):
+    st = _source_statuses["jsearch"]
+    st.update(running=True, phase="Fetching JSearch...")
+    total_new = 0
+    act = activity.start("discovery_jsearch", "JSearch")
+    try:
+        if not JSEARCH_KEY:
+            return
+        from config import SEARCH_KEYWORDS
+        date_posted_map = {24: "today", 72: "3days", 168: "week", 720: "month"}
+        date_posted = min(date_posted_map.items(), key=lambda x: abs(x[0] - freshness_hours))[1]
+        qs = queries or SEARCH_KEYWORDS
+        blacklist = load_json(BLACKLIST_PATH)
+        for query in qs:
+            raw = fetch_jobs(query, location=location, date_posted=date_posted)
+            for job in raw:
+                country = (job.get("job_country") or "").lower().strip()
+                if country and country not in ("us", "united states", "usa"):
+                    continue
+                jid = job_id(job)
+                if not _is_fresh(job, max_age_hours=freshness_hours):
+                    continue
+                if db.is_company_blocked(job.get("employer_name", "")):
+                    continue
+                link = _best_apply_link(job)
+                if not link:
+                    continue
+                if is_blacklisted(job, blacklist):
+                    continue
+                sc = score_job(job)
+                if sc < SCORE_THRESHOLD:
+                    continue
+                skip, _ = llm.hard_skip_check(job.get("job_title", ""), job.get("job_description", ""), job.get("employer_name", ""))
+                if skip:
+                    continue
+                ats_name = next((d.split(".")[0] for d in ALLOWED_PUBLISHERS if d in link), "other")
+                entry = {
+                    "id": jid, "title": job.get("job_title"), "company": job.get("employer_name"),
+                    "location": (job.get("job_city") or "") + ", " + (job.get("job_country") or ""),
+                    "apply_link": link, "ats": ats_name, "score": sc,
+                    "description": job.get("job_description", ""),
+                    "posted_at": job.get("job_posted_at_datetime_utc", ""),
+                    "discovered_at": datetime.now(timezone.utc).isoformat(),
+                    "source": "jsearch", "query": query,
+                }
+                total_new += db.upsert_jobs([entry])
+        activity.finish(act, summary=f"{total_new} new jobs")
+    except Exception as e:
+        _log(f"[jsearch] Error: {e}")
+        activity.finish(act, summary=f"Error: {e}")
+    finally:
+        now = datetime.now(timezone.utc).isoformat()
+        st.update(running=False, phase="", last_run=now, new_jobs=total_new)
+
+
+def _run_source_adzuna(queries, location, freshness_hours):
+    st = _source_statuses["adzuna"]
+    st.update(running=True, phase="Fetching Adzuna...")
+    total_new = 0
+    act = activity.start("discovery_adzuna", "Adzuna")
+    try:
+        if not ADZUNA_APP_ID:
+            return
+        from config import SEARCH_KEYWORDS
+        from ats_discovery import _is_us_location
+        qs = queries or SEARCH_KEYWORDS
+        blacklist = load_json(BLACKLIST_PATH)
+        max_days = max(1, int(freshness_hours / 24))
+        for query in qs:
+            raw = _fetch_adzuna(query, location="us", pages=2, max_days_old=max_days)
+            _log(f"[adzuna] '{query}': {len(raw)} results")
+            for aj in raw:
+                company_name = (aj.get("company") or {}).get("display_name", "")
+                title = aj.get("title", "")
+                link = aj.get("redirect_url", "")
+                loc = aj.get("location", {}).get("display_name", "")
+                if not link or not title or not _is_us_location(loc):
+                    continue
+                if db.is_company_blocked(company_name):
+                    continue
+                jid = _job_id(company_name, title, link)
+                desc = aj.get("description", "")
+                job_dict = {"job_title": title, "job_description": desc, "employer_name": company_name, "job_apply_is_direct": False}
+                if is_blacklisted(job_dict, blacklist):
+                    continue
+                sc = score_job(job_dict)
+                if sc < SCORE_THRESHOLD:
+                    continue
+                skip, _ = llm.hard_skip_check(title, desc, company_name)
+                if skip:
+                    continue
+                entry = {
+                    "id": jid, "title": title, "company": company_name, "location": loc,
+                    "apply_link": link, "ats": "other", "score": sc, "description": desc,
+                    "posted_at": aj.get("created", ""),
+                    "discovered_at": datetime.now(timezone.utc).isoformat(),
+                    "source": "adzuna", "query": query,
+                }
+                total_new += db.upsert_jobs([entry])
+        activity.finish(act, summary=f"{total_new} new jobs")
+    except Exception as e:
+        _log(f"[adzuna] Error: {e}")
+        activity.finish(act, summary=f"Error: {e}")
+    finally:
+        now = datetime.now(timezone.utc).isoformat()
+        st.update(running=False, phase="", last_run=now, new_jobs=total_new)
+
+
+def _run_source_simplify(freshness_hours):
+    st = _source_statuses["simplify"]
+    st.update(running=True, phase="Fetching Simplify...")
+    total_new = 0
+    act = activity.start("discovery_simplify", "Simplify")
+    try:
+        simplify_jobs = fetch_simplify_github(freshness_days=max(1, freshness_hours / 24))
+        _log(f"[simplify] {len(simplify_jobs)} jobs passed filters")
+        blacklist = load_json(BLACKLIST_PATH)
+        for job in simplify_jobs:
+            jid = _job_id(job.get("employer_name", ""), job.get("job_title", ""), job.get("job_apply_link", ""))
+            title_lower = (job.get("job_title") or "").lower()
+            if any(kw in title_lower for kw in SKIP_TITLE_KEYWORDS):
+                continue
+            if is_blacklisted(job, blacklist) or db.is_company_blocked(job.get("employer_name", "")):
+                continue
+            # Simplify pre-filters by SWE category — skip score_job (no description to score on)
+            entry = {
+                "id": jid, "title": job.get("job_title"), "company": job.get("employer_name", ""),
+                "location": job.get("job_city", ""), "apply_link": job.get("job_apply_link"),
+                "ats": "simplify", "score": 50.0, "description": job.get("job_description", ""),
+                "posted_at": job.get("job_posted_at_datetime_utc", ""),
+                "discovered_at": datetime.now(timezone.utc).isoformat(),
+                "source": "simplify", "query": "",
+            }
+            total_new += db.upsert_jobs([entry])
+        activity.finish(act, summary=f"{total_new} new jobs")
+    except Exception as e:
+        _log(f"[simplify] Error: {e}")
+        activity.finish(act, summary=f"Error: {e}")
+    finally:
+        now = datetime.now(timezone.utc).isoformat()
+        st.update(running=False, phase="", last_run=now, new_jobs=total_new)
+
+
+def _run_source_ats(freshness_hours):
+    st = _source_statuses["ats"]
+    st.update(running=True, phase="Fetching ATS companies...")
+    total_new = 0
+    act = activity.start("discovery_ats", "ATS Companies")
+    try:
+        companies = json.loads(Path("companies.json").read_text())
+        import ats_discovery
+        from ats_discovery import (
+            fetch_greenhouse, fetch_lever, fetch_ashby,
+            fetch_amazon, fetch_workday, fetch_pinpoint, fetch_linkedin,
+        )
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        ats_discovery.FRESHNESS_DAYS = max(1, freshness_hours / 24)
+        ATS_FAIL_THRESHOLD = 3
+        skipped_ats_types = set()
+
+        fetchers = {
+            "greenhouse": fetch_greenhouse, "lever": fetch_lever,
+            "ashby": fetch_ashby, "amazon": fetch_amazon,
+            "workday": fetch_workday, "pinpoint": fetch_pinpoint,
+            "linkedin": fetch_linkedin,
+        }
+        fail_counts: dict[str, int] = {}
+
+        for company in companies:
+            ats_type = company.get("ats", "").lower()
+            slug = company.get("id") or company.get("slug", "")
+            name = company.get("name", slug)
+            if ats_type in skipped_ats_types or ats_type not in fetchers:
+                continue
+            try:
+                raw_jobs = fetchers[ats_type](slug, name)
+                fail_counts[ats_type] = 0
+            except Exception as e:
+                fail_counts[ats_type] = fail_counts.get(ats_type, 0) + 1
+                _log(f"[ats] {ats_type} {name} failed: {e}")
+                if fail_counts[ats_type] >= ATS_FAIL_THRESHOLD:
+                    _log(f"[ats] {ats_type} failed {ATS_FAIL_THRESHOLD}x consecutively — skipping remaining {ats_type} companies")
+                    skipped_ats_types.add(ats_type)
+                continue
+            for job in raw_jobs:
+                title = job.get("title") or job.get("job_title", "")
+                title_lower = title.lower()
+                if any(kw in title_lower for kw in SKIP_TITLE_KEYWORDS):
+                    continue
+                if db.is_company_blocked(name):
+                    continue
+                skip, _ = llm.hard_skip_check(title, job.get("description", ""), name)
+                if skip:
+                    continue
+                jid = _job_id(name, title, job.get("apply_link", ""))
+                entry = {
+                    "id": jid, "title": title, "company": name,
+                    "location": job.get("location", ""), "apply_link": job.get("apply_link", ""),
+                    "ats": ats_type, "score": 50.0, "description": job.get("description", ""),
+                    "posted_at": job.get("posted_at", ""),
+                    "discovered_at": datetime.now(timezone.utc).isoformat(),
+                    "source": ats_type, "query": "",
+                }
+                total_new += db.upsert_jobs([entry])
+        activity.finish(act, summary=f"{total_new} new jobs")
+    except Exception as e:
+        _log(f"[ats] Error: {e}")
+        activity.finish(act, summary=f"Error: {e}")
+    finally:
+        now = datetime.now(timezone.utc).isoformat()
+        st.update(running=False, phase="", last_run=now, new_jobs=total_new)
+
+
+def _run_source_sponsors(freshness_hours):
+    st = _source_statuses["sponsors"]
+    st.update(running=True, phase="Fetching H-1B sponsor boards...")
+    total_new = 0
+    act = activity.start("discovery_sponsors", "H-1B Sponsors")
+    try:
+        sponsors = db.get_resolved_sponsors()
+        if not sponsors:
+            return
+        import ats_discovery
+        from ats_discovery import (
+            fetch_greenhouse, fetch_lever, fetch_ashby,
+            fetch_smartrecruiters, fetch_pinpoint, fetch_oracle_hcm,
+        )
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        ats_discovery.FRESHNESS_DAYS = max(1, freshness_hours / 24)
+        sponsor_fetchers = {
+            "greenhouse": fetch_greenhouse, "lever": fetch_lever, "ashby": fetch_ashby,
+            "smartrecruiters": fetch_smartrecruiters, "pinpoint": fetch_pinpoint,
+            "oracle_hcm": fetch_oracle_hcm,
+        }
+
+        def _fetch_board(s):
+            display = db.normalize_sponsor_name(s["name"]).title()
+            if db.is_company_blocked(display) or s["ats_type"] not in sponsor_fetchers:
+                return s, []
+            try:
+                return s, sponsor_fetchers[s["ats_type"]](s["ats_slug"], display)
+            except Exception:
+                return s, []
+
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            futures = [executor.submit(_fetch_board, s) for s in sponsors]
+            activity.update(act, total=len(futures), current=0, log_it=False)
+            for future in as_completed(futures):
+                s, raw_jobs = future.result()
+                name = db.normalize_sponsor_name(s["name"]).title()
+                st["phase"] = f"Sponsor · {name}"
+                if raw_jobs:
+                    entries = _sponsor_jobs_to_entries(s["name"], s["ats_type"], raw_jobs, source="sponsor")
+                    total_new += db.upsert_jobs(entries)
+        _log(f"[discovery] Sponsor boards: {total_new} new jobs from {len(sponsors)} boards")
+        activity.finish(act, summary=f"{total_new} new jobs")
+    except Exception as e:
+        _log(f"[sponsors] Error: {e}")
+        activity.finish(act, summary=f"Error: {e}")
+    finally:
+        now = datetime.now(timezone.utc).isoformat()
+        st.update(running=False, phase="", last_run=now, new_jobs=total_new)
+
+
+class SourceDiscoverRequest(BaseModel):
+    queries: list[str] = []
+    location: str = "United States"
+    freshness_hours: int = 24
+
+
+@app.post("/api/discover/source/{source_name}")
+def trigger_source_discovery(source_name: str, body: SourceDiscoverRequest, background_tasks: BackgroundTasks):
+    runners = {
+        "jsearch": lambda: _run_source_jsearch(body.queries, body.location, body.freshness_hours),
+        "adzuna": lambda: _run_source_adzuna(body.queries, body.location, body.freshness_hours),
+        "simplify": lambda: _run_source_simplify(body.freshness_hours),
+        "ats": lambda: _run_source_ats(body.freshness_hours),
+        "sponsors": lambda: _run_source_sponsors(body.freshness_hours),
+    }
+    if source_name not in runners:
+        raise HTTPException(400, f"Unknown source: {source_name}")
+    if _source_statuses[source_name]["running"]:
+        raise HTTPException(409, f"{source_name} discovery already running")
+    background_tasks.add_task(runners[source_name])
+    return {"status": "started", "source": source_name}
+
+
+@app.get("/api/discover/sources-status")
+def get_sources_status():
+    return _source_statuses
+
+
 @app.get("/api/activity")
 def get_activity():
     """Live, detailed background-activity feed (tasks + recent events)."""
