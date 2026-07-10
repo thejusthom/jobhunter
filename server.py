@@ -1962,9 +1962,19 @@ def get_discovery_status():
 # ---------------------------------------------------------------------------
 
 _source_statuses: dict[str, dict] = {
-    s: {"running": False, "phase": "", "last_run": None, "new_jobs": 0}
+    s: {
+        "running": False,
+        "phase": "",
+        "last_run": db.kv_get(f"source_last_run_{s}"),
+        "new_jobs": int(db.kv_get(f"source_new_jobs_{s}") or 0),
+    }
     for s in ("jsearch", "adzuna", "ats", "sponsors", "simplify")
 }
+
+
+def _persist_source_status(name: str, last_run: str, new_jobs: int):
+    db.kv_set(f"source_last_run_{name}", last_run)
+    db.kv_set(f"source_new_jobs_{name}", str(new_jobs))
 
 
 def _run_source_jsearch(queries, location, freshness_hours):
@@ -2020,6 +2030,7 @@ def _run_source_jsearch(queries, location, freshness_hours):
     finally:
         now = datetime.now(timezone.utc).isoformat()
         st.update(running=False, phase="", last_run=now, new_jobs=total_new)
+        _persist_source_status("jsearch", now, total_new)
 
 
 def _run_source_adzuna(queries, location, freshness_hours):
@@ -2073,6 +2084,7 @@ def _run_source_adzuna(queries, location, freshness_hours):
     finally:
         now = datetime.now(timezone.utc).isoformat()
         st.update(running=False, phase="", last_run=now, new_jobs=total_new)
+        _persist_source_status("adzuna", now, total_new)
 
 
 def _run_source_simplify(freshness_hours):
@@ -2108,6 +2120,7 @@ def _run_source_simplify(freshness_hours):
     finally:
         now = datetime.now(timezone.utc).isoformat()
         st.update(running=False, phase="", last_run=now, new_jobs=total_new)
+        _persist_source_status("simplify", now, total_new)
 
 
 def _run_source_ats(freshness_hours):
@@ -2178,6 +2191,7 @@ def _run_source_ats(freshness_hours):
     finally:
         now = datetime.now(timezone.utc).isoformat()
         st.update(running=False, phase="", last_run=now, new_jobs=total_new)
+        _persist_source_status("ats", now, total_new)
 
 
 def _run_source_sponsors(freshness_hours):
@@ -2229,6 +2243,7 @@ def _run_source_sponsors(freshness_hours):
     finally:
         now = datetime.now(timezone.utc).isoformat()
         st.update(running=False, phase="", last_run=now, new_jobs=total_new)
+        _persist_source_status("sponsors", now, total_new)
 
 
 class SourceDiscoverRequest(BaseModel):
