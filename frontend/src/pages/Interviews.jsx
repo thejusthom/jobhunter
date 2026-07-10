@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../api'
 import LinkedInIdEditor from '../components/LinkedInIdEditor'
+import TimeSelect from '../components/TimeSelect'
 
 const STATUSES = ['active', 'offer', 'accepted', 'rejected', 'withdrawn', 'on_hold', 'ghosted']
 const ROUND_TYPES = ['phone', 'video', 'onsite', 'take_home', 'other']
@@ -346,7 +347,10 @@ function RoundRow({ round, index, onReload }) {
           <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} className={inputClass}>
             {ROUND_TYPES.map(t => <option key={t} value={t}>{t.replace('_', ' ')}</option>)}
           </select>
-          <input type="datetime-local" step={900} value={toLocalInput(form.scheduled_at)} onChange={e => setForm({ ...form, scheduled_at: e.target.value })} className={inputClass} />
+          <div className="flex gap-2">
+            <input type="date" value={toLocalInput(form.scheduled_at).slice(0, 10)} onChange={e => setForm({ ...form, scheduled_at: e.target.value + 'T' + (toLocalInput(form.scheduled_at).slice(11) || '09:00') })} className={`flex-1 ${inputClass}`} />
+            <TimeSelect value={toLocalInput(form.scheduled_at).slice(11) || '09:00'} onChange={e => setForm({ ...form, scheduled_at: (toLocalInput(form.scheduled_at).slice(0, 10) || new Date().toISOString().slice(0, 10)) + 'T' + e.target.value })} className={inputClass + ' cursor-pointer'} />
+          </div>
           <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} className={inputClass}>
             {ROUND_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
@@ -468,7 +472,10 @@ function AddRoundForm({ interviewId, nextSeq, onReload }) {
         <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} className={inputClass}>
           {ROUND_TYPES.map(t => <option key={t} value={t}>{t.replace('_', ' ')}</option>)}
         </select>
-        <input type="datetime-local" step={900} value={form.scheduled_at} onChange={e => setForm({ ...form, scheduled_at: e.target.value })} className={inputClass} />
+        <div className="flex gap-2 sm:col-span-2">
+          <input type="date" value={(form.scheduled_at || '').slice(0, 10)} onChange={e => setForm({ ...form, scheduled_at: e.target.value + 'T' + ((form.scheduled_at || '').slice(11) || '09:00') })} className={`flex-1 ${inputClass}`} />
+          <TimeSelect value={(form.scheduled_at || '').slice(11) || '09:00'} onChange={e => setForm({ ...form, scheduled_at: ((form.scheduled_at || new Date().toISOString()).slice(0, 10)) + 'T' + e.target.value })} className={inputClass + ' cursor-pointer'} />
+        </div>
         <input placeholder="Interviewer" value={form.interviewer} onChange={e => setForm({ ...form, interviewer: e.target.value })} className={inputClass} />
         <input placeholder="Meeting link / location" value={form.meeting_link} onChange={e => setForm({ ...form, meeting_link: e.target.value })} className={`sm:col-span-2 ${inputClass}`} />
         <textarea placeholder="Notes" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={2} className={`sm:col-span-2 ${inputClass}`} />
