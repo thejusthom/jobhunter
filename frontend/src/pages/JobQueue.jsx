@@ -1095,7 +1095,7 @@ export default function JobQueue() {
                     className={`text-[11px] sm:text-xs px-2.5 py-1 rounded-md transition-all duration-300 border btn-press ${
                       copied === 'short_hm' ? 'bg-blue-900/20 text-blue-400 border-blue-500/20 scale-105' : 'bg-blue-900/10 text-blue-400/70 hover:text-blue-400 border-blue-500/15'
                     }`}>
-                    {copied === 'short_hm' ? '✓ Copied' : 'HM Msg'}
+                    {copied === 'short_hm' ? '✓ Copied' : 'Leader Msg'}
                   </button>
                 )}
                 <span className="w-px h-4 bg-border/40 mx-0.5" />
@@ -1135,6 +1135,7 @@ export default function JobQueue() {
                     />
                     <input
                       type="time"
+                      step={900}
                       value={reminderForm.time}
                       onChange={e => setReminderForm({ ...reminderForm, time: e.target.value })}
                       className="w-24 text-xs bg-surface border border-border rounded-md px-2 py-1.5 text-text-primary focus:outline-none focus:border-amber-500/40"

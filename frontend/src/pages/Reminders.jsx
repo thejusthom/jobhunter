@@ -122,6 +122,7 @@ export default function Reminders() {
               <label className="block text-xs text-text-muted mb-1.5">Time</label>
               <input
                 type="time"
+                step={900}
                 required
                 value={form.time}
                 onChange={e => setForm({ ...form, time: e.target.value })}
@@ -210,7 +211,7 @@ export default function Reminders() {
                     <input type="date" value={editForm.date}
                       onChange={e => setEditForm({ ...editForm, date: e.target.value })}
                       className={`flex-1 ${inputClass}`} />
-                    <input type="time" value={editForm.time}
+                    <input type="time" step={900} value={editForm.time}
                       onChange={e => setEditForm({ ...editForm, time: e.target.value })}
                       className={`w-28 ${inputClass}`} />
                     <button onClick={() => saveEdit(r.id)}
