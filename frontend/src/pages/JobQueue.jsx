@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import LinkedInIdEditor from '../components/LinkedInIdEditor'
+import TimeSelect from '../components/TimeSelect'
 
 const STATUS_COLORS = {
   pending: 'bg-accent-muted text-accent',
@@ -1133,12 +1134,10 @@ export default function JobQueue() {
                       onChange={e => setReminderForm({ ...reminderForm, date: e.target.value })}
                       className="flex-1 text-xs bg-surface border border-border rounded-md px-2 py-1.5 text-text-primary focus:outline-none focus:border-amber-500/40"
                     />
-                    <input
-                      type="time"
-                      step={900}
+                    <TimeSelect
                       value={reminderForm.time}
                       onChange={e => setReminderForm({ ...reminderForm, time: e.target.value })}
-                      className="w-24 text-xs bg-surface border border-border rounded-md px-2 py-1.5 text-text-primary focus:outline-none focus:border-amber-500/40"
+                      className="w-24 text-xs bg-surface border border-border rounded-md px-2 py-1.5 text-text-primary focus:outline-none focus:border-amber-500/40 cursor-pointer"
                     />
                     <button
                       onClick={() => handleSetReminder(selected)}

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import TimeSelect from '../components/TimeSelect'
 
 function formatDateForInput(date) {
   const d = new Date(date)
@@ -120,13 +121,10 @@ export default function Reminders() {
             </div>
             <div>
               <label className="block text-xs text-text-muted mb-1.5">Time</label>
-              <input
-                type="time"
-                step={900}
-                required
+              <TimeSelect
                 value={form.time}
                 onChange={e => setForm({ ...form, time: e.target.value })}
-                className={`w-full ${inputClass}`}
+                className={`w-full ${inputClass} cursor-pointer`}
               />
             </div>
             <input
@@ -211,9 +209,9 @@ export default function Reminders() {
                     <input type="date" value={editForm.date}
                       onChange={e => setEditForm({ ...editForm, date: e.target.value })}
                       className={`flex-1 ${inputClass}`} />
-                    <input type="time" step={900} value={editForm.time}
+                    <TimeSelect value={editForm.time}
                       onChange={e => setEditForm({ ...editForm, time: e.target.value })}
-                      className={`w-28 ${inputClass}`} />
+                      className={`w-28 ${inputClass} cursor-pointer`} />
                     <button onClick={() => saveEdit(r.id)}
                       className="bg-accent hover:bg-accent-hover text-white font-medium text-xs px-4 py-2 rounded-lg transition-all shrink-0">
                       Save
