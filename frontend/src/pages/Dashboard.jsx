@@ -23,7 +23,13 @@ export default function Dashboard() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [freshness, setFreshness] = useState(24)
-  const [selected, setSelected] = useState(new Set(ALL_KEYS))
+  const [selected, setSelected] = useState(() => {
+    try {
+      const saved = localStorage.getItem('discovery_selected')
+      if (saved) return new Set(JSON.parse(saved).filter(k => ALL_KEYS.includes(k)))
+    } catch (_) {}
+    return new Set(ALL_KEYS)
+  })
   const [sourceStatuses, setSourceStatuses] = useState({})
   const pollRef = useRef(null)
 
@@ -61,6 +67,7 @@ export default function Dashboard() {
     setSelected(prev => {
       const next = new Set(prev)
       next.has(key) ? next.delete(key) : next.add(key)
+      localStorage.setItem('discovery_selected', JSON.stringify([...next]))
       return next
     })
   }
@@ -213,13 +220,13 @@ export default function Dashboard() {
               {anyRunning ? 'Running...' : `Run${selected.size < ALL_KEYS.length ? ` (${selected.size})` : ' All'}`}
             </button>
             <button
-              onClick={() => setSelected(new Set(ALL_KEYS))}
+              onClick={() => { const s = new Set(ALL_KEYS); setSelected(s); localStorage.setItem('discovery_selected', JSON.stringify([...s])) }}
               className="text-xs text-text-muted hover:text-text-tertiary transition-colors"
             >
               All
             </button>
             <button
-              onClick={() => setSelected(new Set())}
+              onClick={() => { setSelected(new Set()); localStorage.setItem('discovery_selected', '[]') }}
               className="text-xs text-text-muted hover:text-text-tertiary transition-colors"
             >
               None
